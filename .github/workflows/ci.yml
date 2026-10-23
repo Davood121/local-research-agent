@@ -26,7 +26,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: windows-2022
             bundles: msi,nsis
           - os: macos-latest
             bundles: app,dmg
@@ -82,6 +82,12 @@ jobs:
           }
           "VULKAN_SDK=$($sdk.FullName)" >> $env:GITHUB_ENV
           "$($sdk.FullName)\Bin" >> $env:GITHUB_PATH
+
+      - name: Configure MSVC shared PDB writes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "CL=/FS" >> $env:GITHUB_ENV
 
       - name: Install frontend dependencies
         run: npm ci
