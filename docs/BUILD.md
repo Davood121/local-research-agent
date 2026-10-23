@@ -48,11 +48,8 @@ SearXNG is not bundled, installed, started, or updated by the app. See
 1. Install the **Visual Studio 2022 Build Tools** with the *Desktop development
    with C++* workload (MSVC v143 + Windows SDK). The Rust MSVC target needs
    `link.exe`.
-2. Install **WebView2 Runtime**. It ships with Windows 10/11 (Edge); no
-   download is performed by the installer, because
-   `bundle.windows.webviewInstallMode` is `skip` to keep the installer small and
-   fully offline. If the runtime is missing the app shows a WebView2 error and
-   cannot render; that is documented, fail-closed behaviour.
+2. The Windows installer downloads and installs the **WebView2 Runtime** when
+   it is missing. Windows 10/11 systems normally already include it.
 3. `rustup` (https://rustup.rs) and Node 22.
 
 ### macOS
@@ -115,15 +112,28 @@ and Linux **AppImage and DEB** packages. Each workflow run uploads the generated
 installers as per-platform artifacts; download them from the run's **Summary**
 page. macOS builds are unsigned and not notarized, so macOS may require the user
 to approve the app before opening it. Windows installers are unsigned and may
-show a SmartScreen warning. Windows installers skip WebView2 setup; Windows
-10/11 systems normally already include the WebView2 runtime.
+show a SmartScreen warning. The installer downloads WebView2 if it is not
+already installed.
+
+For normal app downloads, open the
+[latest GitHub Release](https://github.com/Davood121/local-research-agent/releases/latest)
+and download the installer for your operating system:
+
+- **Windows:** run the `*-x64-setup.exe` installer (recommended) or the `.msi`.
+- **macOS:** open the `.dmg`, then drag **Local Research Agent** into
+  **Applications**. Since the build is unsigned, macOS may ask you to approve it
+  in **Privacy & Security** before its first launch.
+- **Linux:** install the `.deb` with `sudo apt install ./<package>.deb`, or make
+  the `.AppImage` executable with `chmod +x <package>.AppImage` and launch it.
+  The AppImage requires a compatible FUSE runtime.
 
 To publish a GitHub Release, update the app version consistently in
 `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, and
 `src-tauri/tauri.conf.json`, then push a matching version tag (for example,
 `v0.1.0`). CI builds all three platforms and attaches their installers to the
-release. A regular workflow run or manual dispatch builds and uploads artifacts
-without publishing a release.
+release, making them available from the latest-release link above. A regular
+workflow run or manual dispatch builds and uploads artifacts without publishing
+a release.
 
 ## Commands
 

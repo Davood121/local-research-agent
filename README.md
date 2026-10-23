@@ -63,11 +63,12 @@ out of the picker and rejected by the backend. SearXNG is likewise fixed at
 
 ## Installers
 
-The cross-platform CI workflow builds Windows MSI/EXE installers, a macOS DMG,
-and Linux AppImage/DEB packages. Successful workflow runs provide downloadable
-artifacts; version tags publish the installers as a GitHub Release. See
-[docs/BUILD.md](docs/BUILD.md#installers-and-releases) for download and release
-details.
+Download the app installers from the
+[latest release](https://github.com/Davood121/local-research-agent/releases/latest):
+Windows `.exe` or `.msi`, macOS `.dmg`, or Linux `.deb` / `.AppImage`. On macOS,
+drag the app from the DMG into Applications. See
+[docs/BUILD.md](docs/BUILD.md#installers-and-releases) for installation steps
+and platform notes.
 
 ## Run in development
 
