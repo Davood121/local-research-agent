@@ -1,7 +1,7 @@
 {
   "name": "local-research-agent",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "description": "Fully local, offline AI research agent (Tauri v2 + React).",
   "license": "MIT OR Apache-2.0",

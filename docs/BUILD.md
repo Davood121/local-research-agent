@@ -131,7 +131,7 @@ and download the installer for your operating system:
 To publish a GitHub Release, update the app version consistently in
 `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, and
 `src-tauri/tauri.conf.json`, then push a matching version tag (for example,
-`v0.1.5`). CI builds all three platforms and attaches their installers to the
+`v0.1.6`). CI builds all three platforms and attaches their installers to the
 release, making them available from the latest-release link above. A regular
 workflow run or manual dispatch builds and uploads artifacts without publishing
 a release.
