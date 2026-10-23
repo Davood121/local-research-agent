@@ -68,6 +68,7 @@ sudo apt-get install -y \
   librsvg2-dev \
   patchelf \
   glslc \
+  spirv-headers \
   libvulkan-dev \
   pkg-config \
   libssl-dev \
