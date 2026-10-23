@@ -83,12 +83,21 @@ jobs:
           "VULKAN_SDK=$($sdk.FullName)" >> $env:GITHUB_ENV
           "$($sdk.FullName)\Bin" >> $env:GITHUB_PATH
 
-      - name: Configure CMake MSVC shared PDB writes
+      - name: Shorten Windows Cargo build path
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          "CMAKE_C_FLAGS=/FS" >> $env:GITHUB_ENV
-          "CMAKE_CXX_FLAGS=/FS" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=D:\t" >> $env:GITHUB_ENV
+
+      - name: Link macOS Clang runtime
+        if: runner.os == 'macOS'
+        run: |
+          clang_runtime="$(xcrun clang --print-resource-dir)/lib/darwin/libclang_rt.osx.a"
+          if [[ ! -f "$clang_runtime" ]]; then
+            echo "::error::Clang runtime archive not found: $clang_runtime"
+            exit 1
+          fi
+          echo "RUSTFLAGS=-C link-arg=$clang_runtime" >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies
         run: npm ci
@@ -124,6 +133,8 @@ jobs:
         with:
           name: installers-${{ matrix.os }}
           path: |
+            D:/t/release/bundle/msi/*.msi
+            D:/t/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/dmg/*.dmg
