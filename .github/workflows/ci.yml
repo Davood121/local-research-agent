@@ -17,6 +17,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: 1
+  CMAKE_BUILD_PARALLEL_LEVEL: 1
 
 jobs:
   build:
