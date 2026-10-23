@@ -1,0 +1,62 @@
+# SearXNG settings for Local Research Agent.
+#
+# Copy this file next to docker-compose.yml (or mount it at
+# /etc/searxng/settings.yml). Replace the secret before using the instance for
+# anything other than a local test. The app requires JSON output; without
+# `json` in search.formats it will explain the configuration error instead of
+# silently scraping HTML.
+
+use_default_settings: true
+
+general:
+  instance_name: "Local Research Agent"
+
+server:
+  # Change this to a long random value if the instance is reachable by anything
+  # other than this machine. The compose example binds to 127.0.0.1 only.
+  secret_key: "replace-with-a-long-random-secret"
+  # Local, single-user instance: no Redis/Valkey limiter is needed.
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json
+
+# Engine overrides are merged with the shipped SearXNG defaults by engine name.
+# The defaults already include DuckDuckGo and Brave for broad web coverage.
+# This block adds independent/free indexes and makes the open knowledge bases
+# return normal article results instead of infobox-only results.
+#
+# No API keys are required for this set. Proprietary, captcha-gated, or
+# key-required engines (Marginalia, Mojeek, Startpage, Swisscows, Bing, Google)
+# are intentionally left disabled. Qwant was also tested here but returned
+# "access denied" from this network, so it stays disabled too.
+engines:
+  # SearXNG enables this proprietary Google engine by default. It dominated
+  # broad queries with map/Google Earth results, so opt out explicitly.
+  - name: google cse
+    disabled: true
+
+  # Open knowledge bases: include their articles in the general result list.
+  - name: wikipedia
+    display_type: ["list", "infobox"]
+
+  - name: wikidata
+    display_type: ["list", "infobox"]
+
+  # Free, independent indexes. Mwmbl and Wiby are kept as discovery sources but
+  # weighted down: they return many results for broad queries and would
+  # otherwise crowd out the general web indexes in the six-result window.
+  - name: mwmbl
+    disabled: false
+    weight: 0.2
+
+  - name: wiby
+    disabled: false
+    weight: 0.2
+
+  - name: yep
+    disabled: false

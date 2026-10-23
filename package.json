@@ -1,0 +1,48 @@
+{
+  "name": "local-research-agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Fully local, offline AI research agent (Tauri v2 + React).",
+  "license": "MIT OR Apache-2.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tools/**/*.mjs\" \"*.{json,js,ts,mjs}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tools/**/*.mjs\" \"*.{json,js,ts,mjs}\"",
+    "mock:search": "node tools/searxng-mock.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:build": "tauri build",
+    "tauri:build:windows": "tauri build --bundles msi,nsis",
+    "tauri:build:macos": "tauri build --bundles app,dmg",
+    "tauri:build:linux": "tauri build --bundles appimage,deb",
+    "icon": "tauri icon app-icon.svg"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^22.7.0",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.13.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "postcss": "^8.4.47",
+    "prettier": "^3.3.3",
+    "tailwindcss": "^3.4.14",
+    "typescript": "~5.6.3",
+    "typescript-eslint": "^8.10.0",
+    "vite": "^5.4.9"
+  }
+}

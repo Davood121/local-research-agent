@@ -1,0 +1,53 @@
+[package]
+name = "local-research-agent"
+version = "0.1.0"
+description = "Fully local, offline AI research agent"
+authors = ["Local Research Agent contributors"]
+edition = "2021"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "local_research_agent_lib"
+# Desktop-only build. Tauri's template also emits staticlib/cdylib for mobile,
+# which this milestone does not target (and whose huge GNU Windows export table
+# breaks `cargo test` locally).
+crate-type = ["rlib"]
+
+[[bin]]
+name = "local-research-agent"
+path = "src/main.rs"
+# The binary is a thin desktop entry point; unit tests live in the library.
+# Disabling its test harness keeps `cargo test` free of the GUI runtime.
+test = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri shell. No plugins are enabled in this milestone.
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Event fan-out + timers + cancellable tasks + bounded research lookups.
+tokio = { version = "1", features = ["sync", "time", "macros", "process", "net", "rt"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+# Ollama stays on plain loopback HTTP. Research page reads need HTTPS, using the
+# operating system's trust store through native-tls. Proxies are disabled for
+# every client built by this crate.
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
+# RAM/disk telemetry. Only the modules we use are compiled in.
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
+# NVIDIA telemetry. NVML is loaded at runtime, so a missing driver is not a build error.
+nvml-wrapper = "0.10"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[profile.release.package."*"]
+opt-level = "s"
