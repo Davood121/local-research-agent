@@ -16,8 +16,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CFLAGS: ${{ runner.os == 'Windows' && '/FS' || '' }}
-  CXXFLAGS: ${{ runner.os == 'Windows' && '/FS' || '' }}
 
 jobs:
   build:
@@ -82,6 +80,13 @@ jobs:
           }
           "VULKAN_SDK=$($sdk.FullName)" >> $env:GITHUB_ENV
           "$($sdk.FullName)\Bin" >> $env:GITHUB_PATH
+
+      - name: Configure MSVC shared PDB writes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "CFLAGS=/FS" >> $env:GITHUB_ENV
+          "CXXFLAGS=/FS" >> $env:GITHUB_ENV
 
       - name: Install frontend dependencies
         run: npm ci
