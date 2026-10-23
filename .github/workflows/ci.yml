@@ -16,6 +16,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CFLAGS: ${{ runner.os == 'Windows' && '/FS' || '' }}
+  CXXFLAGS: ${{ runner.os == 'Windows' && '/FS' || '' }}
 
 jobs:
   build:
@@ -29,7 +31,7 @@ jobs:
             bundles: msi,nsis
           - os: macos-latest
             bundles: app,dmg
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             bundles: appimage,deb
 
     steps:
