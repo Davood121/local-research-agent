@@ -1,18 +1,24 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(debug_assertions)]
 use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::EVENT_CHANNEL_CAPACITY;
+use crate::engine::{InferenceDevice, LoadedEngineModel};
 use crate::error::AppError;
 use crate::events::AppEvent;
 
 struct ActiveChat {
     run_id: String,
+    cancel: CancellationToken,
+}
+
+struct ActiveDownload {
+    id: String,
     cancel: CancellationToken,
 }
 
@@ -29,7 +35,13 @@ pub struct AppState {
     /// User-initiated research reader. Redirects are handled manually so every
     /// hop can be revalidated, and proxies are never used.
     pub research_http: Option<reqwest::Client>,
+    /// Models resident in the embedded llama.cpp engine. At most one model is
+    /// held at a time: loading a new one replaces the old weights.
+    pub engine: Mutex<Option<LoadedEngineModel>>,
+    /// Preference for the next model load. Persisted by the engine commands.
+    device: Mutex<InferenceDevice>,
     chat: Mutex<Option<ActiveChat>>,
+    download: Mutex<Option<ActiveDownload>>,
     subscribed: AtomicBool,
     #[cfg(debug_assertions)]
     debug_active: Arc<AtomicBool>,
@@ -56,7 +68,10 @@ impl AppState {
             cancel: CancellationToken::new(),
             http,
             research_http,
+            engine: Mutex::new(None),
+            device: Mutex::new(InferenceDevice::Cpu),
             chat: Mutex::new(None),
+            download: Mutex::new(None),
             subscribed: AtomicBool::new(false),
             #[cfg(debug_assertions)]
             debug_active: Arc::new(AtomicBool::new(false)),
@@ -98,9 +113,110 @@ impl AppState {
         }
     }
 
+    /// Access the embedded engine's resident-model slot. A poisoned lock means
+    /// the process is shutting down mid-load; commands fail closed.
+    pub fn engine_lock(&self) -> Result<MutexGuard<'_, Option<LoadedEngineModel>>, AppError> {
+        self.engine
+            .lock()
+            .map_err(|_| AppError::new("the embedded engine state is unavailable"))
+    }
+
+    /// Current inference-device preference.
+    pub fn inference_device(&self) -> Result<InferenceDevice, AppError> {
+        self.device
+            .lock()
+            .map(|device| *device)
+            .map_err(|_| AppError::new("the inference-device setting is unavailable"))
+    }
+
+    /// Replace the device preference. The caller unloads resident weights when
+    /// the device actually changes, because offload is fixed at load time.
+    pub fn set_inference_device(&self, device: InferenceDevice) -> Result<(), AppError> {
+        let mut slot = self
+            .device
+            .lock()
+            .map_err(|_| AppError::new("the inference-device setting is unavailable"))?;
+        *slot = device;
+        Ok(())
+    }
+
+    /// Change the device preference only while no chat is active. The chat lock
+    /// keeps a new run from starting between the idle check and model unload.
+    pub fn change_inference_device(
+        &self,
+        device: InferenceDevice,
+        persist: impl FnOnce() -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        let chat = self
+            .chat
+            .lock()
+            .map_err(|_| AppError::new("chat state is unavailable"))?;
+        if chat.is_some() {
+            return Err(AppError::new(
+                "Wait for the active chat to finish before changing the inference device.",
+            ));
+        }
+
+        let mut current = self
+            .device
+            .lock()
+            .map_err(|_| AppError::new("the inference-device setting is unavailable"))?;
+        if *current == device {
+            return Ok(());
+        }
+
+        let mut engine = self.engine_lock()?;
+        persist()?;
+        *current = device;
+        *engine = None;
+        Ok(())
+    }
+
     /// Cancel the active chat, if any. Idempotent: repeat calls return false.
     pub fn cancel_chat(&self) -> bool {
         match self.chat.lock() {
+            Ok(slot) => match slot.as_ref() {
+                Some(active) => {
+                    active.cancel.cancel();
+                    true
+                }
+                None => false,
+            },
+            Err(_) => false,
+        }
+    }
+
+    /// Reserve the single model-download slot. One download at a time keeps
+    /// request counts and disk usage predictable.
+    pub fn claim_download(&self, id: &str) -> Result<CancellationToken, AppError> {
+        let mut slot = self
+            .download
+            .lock()
+            .map_err(|_| AppError::new("The download state is unavailable."))?;
+        if slot.is_some() {
+            return Err(AppError::new("Another model download is already running."));
+        }
+
+        let cancel = CancellationToken::new();
+        *slot = Some(ActiveDownload {
+            id: id.to_owned(),
+            cancel: cancel.clone(),
+        });
+        Ok(cancel)
+    }
+
+    /// Release the download slot only if it still belongs to this id.
+    pub fn release_download(&self, id: &str) {
+        if let Ok(mut slot) = self.download.lock() {
+            if slot.as_ref().is_some_and(|active| active.id == id) {
+                *slot = None;
+            }
+        }
+    }
+
+    /// Cancel the active download, if any. Idempotent.
+    pub fn cancel_download(&self) -> bool {
+        match self.download.lock() {
             Ok(slot) => match slot.as_ref() {
                 Some(active) => {
                     active.cancel.cancel();

@@ -2,9 +2,13 @@
 //!
 //! The webview only sends a question. This module chooses the search results,
 //! validates every page URL, reads a bounded amount of public text, ranks the
-//! excerpts locally and then streams a cited answer through the same Ollama
-//! path as chat. Cancellation covers the whole pipeline, not just generation.
+//! excerpts locally and then streams a cited answer through the same local
+//! inference path as chat (embedded llama.cpp engine, or Ollama as fallback).
+//! Cancellation covers the whole pipeline, not just generation.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -14,7 +18,10 @@ use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::commands::chat::{fetch_tags, read_error_body, short, stream_chat, StreamOutcome};
+use crate::commands::chat::{
+    fetch_tags, read_error_body, short, stream_chat, stream_engine_chat, StreamOutcome,
+};
+use crate::engine;
 use crate::error::AppError;
 use crate::events::{AppEvent, StepStatus};
 use crate::ollama::{
@@ -22,11 +29,13 @@ use crate::ollama::{
     StartChatRequest,
 };
 use crate::research::{
-    build_context, build_messages, build_system_prompt, chunk_text, clean_fragment,
-    clean_plain_text, domain_for, extract_html, is_public_ip, normalize_results, rank_chunks,
-    search_query, validate_page_url, validate_research_request, Chunk, ChunkKind, ResearchSource,
-    SearxResponse, StartResearchRequest, CHUNK_CHARS, CHUNK_OVERLAP, MAX_CONTEXT_CHUNKS,
-    MAX_FETCHED_PAGES, MAX_PAGE_BYTES, MAX_REDIRECTS, MAX_SEARCH_RESULTS, MAX_SOURCE_SNIPPET_CHARS,
+    build_context, build_messages, build_system_prompt, canonical_url_key, chunk_text,
+    citation_footer, clean_fragment, clean_plain_text, domain_for, evaluate_evidence, extract_html,
+    has_citation_labels, is_public_ip, normalize_results, plan_research, rank_chunks, rank_hits,
+    retry_query, text_matches_query, validate_page_url, validate_research_request, Chunk,
+    ChunkKind, PlannedQuery, ResearchSource, SearchHit, SearxResponse, StartResearchRequest,
+    CHUNK_CHARS, CHUNK_OVERLAP, MAX_CANDIDATE_SOURCES, MAX_CONTEXT_CHUNKS, MAX_FETCHED_PAGES,
+    MAX_PAGE_BYTES, MAX_REDIRECTS, MAX_RETRY_PAGES, MAX_SEARCH_RESULTS, MAX_SOURCE_SNIPPET_CHARS,
     SEARXNG_BASE_URL,
 };
 use crate::state::AppState;
@@ -86,18 +95,31 @@ pub async fn start_research(
         ));
     };
 
-    let tags = fetch_tags(&client).await.map_err(|error| {
-        AppError::new(format!(
-            "{error} Start Ollama with `ollama serve`, then refresh the model list."
-        ))
-    })?;
-    let models = local_models(tags);
-    if !is_local_model(&models, &request.model) {
-        return Err(AppError::new(
-            "That model is not available as an installed local chat model. Pull it with `ollama pull <model>` or pick another model.",
-        ));
-    }
-    let context_length = context_length_for(&models, &request.model);
+    // The embedded engine owns any run whose model name matches a GGUF in the
+    // app-data models directory (same routing as chat). Only fall through to
+    // the Ollama validation when the model is not an installed GGUF.
+    let engine_model = engine::models_dir(&app)
+        .ok()
+        .and_then(|dir| engine::find_model_file(&dir, &request.model))
+        .map(|path| (request.model.clone(), path));
+
+    let context_length = if engine_model.is_some() {
+        // The engine reads the window from the GGUF itself.
+        None
+    } else {
+        let tags = fetch_tags(&client).await.map_err(|error| {
+            AppError::new(format!(
+                "{error} Start Ollama with `ollama serve`, then refresh the model list."
+            ))
+        })?;
+        let models = local_models(tags);
+        if !is_local_model(&models, &request.model) {
+            return Err(AppError::new(
+                "That model is not available as an installed local chat model. Pull it with `ollama pull <model>` or pick another model.",
+            ));
+        }
+        context_length_for(&models, &request.model)
+    };
     let chat_cancel = state.claim_chat(&request.run_id)?;
     let tx = state.tx.clone();
     let app_cancel = state.cancel.clone();
@@ -108,6 +130,7 @@ pub async fn start_research(
 
     tauri::async_runtime::spawn(async move {
         run_research(
+            &app,
             &client,
             &reader,
             &tx,
@@ -116,6 +139,7 @@ pub async fn start_research(
             &query,
             &history,
             context_length,
+            engine_model,
             &chat_cancel,
             &app_cancel,
         )
@@ -143,6 +167,7 @@ async fn probe_searxng(client: &reqwest::Client) -> Result<(), String> {
 
 #[allow(clippy::too_many_arguments)]
 async fn run_research(
+    app: &AppHandle,
     client: &reqwest::Client,
     reader: &reqwest::Client,
     tx: &broadcast::Sender<AppEvent>,
@@ -151,107 +176,556 @@ async fn run_research(
     query: &str,
     history: &[ChatMessage],
     context_length: Option<u64>,
+    engine_model: Option<(String, PathBuf)>,
     chat_cancel: &CancellationToken,
     app_cancel: &CancellationToken,
 ) {
     let research_started = Instant::now();
     send_step(tx, run_id, "research", StepStatus::Started, None);
 
+    // 1. Plan the question locally: intent, sub-queries, engines, time range.
+    let plan_started = Instant::now();
+    send_step(tx, run_id, "plan", StepStatus::Started, None);
+    let plan = plan_research(query);
+    if plan.queries.is_empty() {
+        let args = json!({ "intent": plan.intent.label() });
+        send_tool(
+            tx,
+            run_id,
+            "plan_research",
+            args,
+            StepStatus::Failed,
+            Some(elapsed_ms(plan_started)),
+            Some("the query could not be planned".to_owned()),
+        );
+        send_step(
+            tx,
+            run_id,
+            "plan",
+            StepStatus::Failed,
+            Some(elapsed_ms(plan_started)),
+        );
+        fail_research(
+            tx,
+            run_id,
+            "The research query could not be planned.".to_owned(),
+            elapsed_ms(research_started),
+        );
+        return;
+    }
+
+    let planned_queries = serde_json::to_value(&plan.queries).unwrap_or_else(|_| json!([]));
+    let plan_duration = elapsed_ms(plan_started);
+    send_tool(
+        tx,
+        run_id,
+        "plan_research",
+        json!({
+            "intent": plan.intent.label(),
+            "queries": planned_queries,
+        }),
+        StepStatus::Done,
+        Some(plan_duration),
+        Some(format!(
+            "{} · {} search path(s)",
+            plan.intent.label(),
+            plan.queries.len()
+        )),
+    );
+    send_step(tx, run_id, "plan", StepStatus::Done, Some(plan_duration));
+
+    // The full prompt stays the model's question, but lexical ranking should
+    // use the focused content query when the planner produced one. Question
+    // words such as \"what\" and \"is\" otherwise create accidental matches in
+    // unrelated snippets.
+    let ranking_query = plan
+        .queries
+        .iter()
+        .find(|query| query.purpose == "focus")
+        .or_else(|| plan.queries.first())
+        .map(|query| query.query.as_str())
+        .unwrap_or(query);
+
+    // 2. Search every planned path in parallel. A failed engine route falls
+    // back to the general category inside search_planned_query.
     let search_started = Instant::now();
+    send_step(tx, run_id, "search", StepStatus::Started, None);
+    let search_args = json!({
+        "intent": plan.intent.label(),
+        "queries": plan.queries.iter().map(|query| query.query.clone()).collect::<Vec<_>>(),
+        "engines": plan.queries.iter().map(|query| query.engines.clone()).collect::<Vec<_>>(),
+    });
     send_tool(
         tx,
         run_id,
         "web_search",
-        json!({ "query": search_query(query) }),
+        search_args.clone(),
         StepStatus::Started,
         None,
         None,
     );
-    let search_result = tokio::select! {
-        _ = app_cancel.cancelled() => None,
-        _ = chat_cancel.cancelled() => None,
-        result = search_searxng(client, query) => Some(result),
+
+    let search_batch = match search_plan(client, &plan.queries, app_cancel, chat_cancel).await {
+        Phase::Cancelled => {
+            cancel_phase(
+                tx,
+                run_id,
+                "web_search",
+                search_args,
+                "search",
+                search_started,
+                research_started,
+            );
+            return;
+        }
+        Phase::Done(batch) => batch,
     };
-    let Some(search_result) = search_result else {
+    let SearchBatch { hits, errors } = search_batch;
+    if hits.is_empty() {
+        let detail = errors.first().cloned().unwrap_or_else(|| {
+            "SearXNG returned no usable results. Try a different query or check the instance configuration."
+                .to_owned()
+        });
         send_tool(
             tx,
             run_id,
             "web_search",
-            json!({ "query": search_query(query) }),
+            search_args,
             StepStatus::Failed,
             Some(elapsed_ms(search_started)),
-            Some("cancelled".to_owned()),
+            Some(short(&detail)),
         );
-        fail_research(
+        send_step(
             tx,
             run_id,
-            "Generation stopped.".to_owned(),
-            elapsed_ms(research_started),
+            "search",
+            StepStatus::Failed,
+            Some(elapsed_ms(search_started)),
         );
-        return;
-    };
-
-    let hits = match search_result {
-        Ok(hits) => {
-            send_tool(
-                tx,
-                run_id,
-                "web_search",
-                json!({ "query": search_query(query) }),
-                StepStatus::Done,
-                Some(elapsed_ms(search_started)),
-                Some(format!("{} result(s) from the local SearXNG", hits.len())),
-            );
-            hits
-        }
-        Err(error) => {
-            send_tool(
-                tx,
-                run_id,
-                "web_search",
-                json!({ "query": search_query(query) }),
-                StepStatus::Failed,
-                Some(elapsed_ms(search_started)),
-                Some(short(&error)),
-            );
-            fail_research(tx, run_id, error, elapsed_ms(research_started));
-            return;
-        }
-    };
-
-    if hits.is_empty() {
-        fail_research(
-            tx,
-            run_id,
-            "SearXNG returned no usable results. Try a different query or check the instance configuration."
-                .to_owned(),
-            elapsed_ms(research_started),
-        );
+        fail_research(tx, run_id, detail, elapsed_ms(research_started));
         return;
     }
 
-    let fetch_count = hits.len().min(MAX_FETCHED_PAGES);
+    let mut ranked = rank_hits(ranking_query, hits, MAX_CANDIDATE_SOURCES);
+    let search_duration = elapsed_ms(search_started);
+    let error_note = if errors.is_empty() {
+        String::new()
+    } else {
+        format!(" · {} sub-query error(s)", errors.len())
+    };
+    send_tool(
+        tx,
+        run_id,
+        "web_search",
+        search_args,
+        StepStatus::Done,
+        Some(search_duration),
+        Some(format!(
+            "{} unique source(s) from {} search path(s){}",
+            ranked.len(),
+            plan.queries.len(),
+            error_note
+        )),
+    );
+    send_step(
+        tx,
+        run_id,
+        "search",
+        StepStatus::Done,
+        Some(search_duration),
+    );
+
+    // 3. Read pages in one bounded wave. The retry below reads at most two
+    // additional pages, so a weak first pass cannot grow without limit.
     let read_started = Instant::now();
+    send_step(tx, run_id, "read", StepStatus::Started, None);
+    let mut fetched: HashMap<String, Result<FetchedPage, String>> = HashMap::new();
+    let initial_keys = next_fetch_keys(&ranked, MAX_FETCHED_PAGES, &fetched);
+    let read_args = json!({ "pages": initial_keys.len(), "adaptive": true });
     send_tool(
         tx,
         run_id,
         "read_pages",
-        json!({ "pages": fetch_count }),
+        read_args.clone(),
         StepStatus::Started,
         None,
         None,
     );
-
-    let mut tasks = JoinSet::new();
-    for (index, hit) in hits.iter().take(fetch_count).enumerate() {
-        let reader = reader.clone();
-        let url = hit.url.clone();
-        let title = hit.title.clone();
-        tasks.spawn(async move { (index, fetch_page(&reader, &url, &title).await) });
+    if let Phase::Cancelled = fetch_hits(
+        reader,
+        &ranked,
+        &initial_keys,
+        &mut fetched,
+        app_cancel,
+        chat_cancel,
+    )
+    .await
+    {
+        cancel_phase(
+            tx,
+            run_id,
+            "read_pages",
+            read_args,
+            "read",
+            read_started,
+            research_started,
+        );
+        return;
     }
 
-    let mut pages: Vec<Option<Result<FetchedPage, String>>> =
-        (0..fetch_count).map(|_| None).collect();
+    let (mut sources, mut chunks, _) = assemble_sources(&ranked, &fetched, ranking_query);
+    let initial_read_summary = read_summary(initial_keys.len(), &fetched, sources.len());
+    let initial_read_duration = elapsed_ms(read_started);
+    send_tool(
+        tx,
+        run_id,
+        "read_pages",
+        read_args,
+        StepStatus::Done,
+        Some(initial_read_duration),
+        Some(initial_read_summary),
+    );
+    send_step(
+        tx,
+        run_id,
+        "read",
+        StepStatus::Done,
+        Some(initial_read_duration),
+    );
+
+    // 4. Evaluate evidence locally. If coverage or source diversity is weak,
+    // run one broader search and read at most two more pages.
+    let verify_started = Instant::now();
+    send_step(tx, run_id, "verify", StepStatus::Started, None);
+    let mut report = evaluate_evidence(ranking_query, &sources, &chunks);
+    let mut retried = false;
+
+    if report.is_weak() {
+        let retry_text = retry_query(&plan);
+        if !retry_text.is_empty() {
+            retried = true;
+            let retry_query = PlannedQuery {
+                query: retry_text,
+                engines: Vec::new(),
+                purpose: "retry".to_owned(),
+                time_range: None,
+            };
+            let retry_args = json!({
+                "query": retry_query.query.clone(),
+                "retry": true,
+            });
+            send_tool(
+                tx,
+                run_id,
+                "web_search",
+                retry_args.clone(),
+                StepStatus::Started,
+                None,
+                None,
+            );
+
+            let retry_batch = match search_plan(
+                client,
+                std::slice::from_ref(&retry_query),
+                app_cancel,
+                chat_cancel,
+            )
+            .await
+            {
+                Phase::Cancelled => {
+                    cancel_phase(
+                        tx,
+                        run_id,
+                        "web_search",
+                        retry_args,
+                        "verify",
+                        verify_started,
+                        research_started,
+                    );
+                    return;
+                }
+                Phase::Done(batch) => batch,
+            };
+
+            if !retry_batch.hits.is_empty() {
+                let mut combined = ranked;
+                combined.extend(retry_batch.hits);
+                ranked = rank_hits(ranking_query, combined, MAX_CANDIDATE_SOURCES);
+
+                let retry_keys = next_fetch_keys(&ranked, MAX_RETRY_PAGES, &fetched);
+                if !retry_keys.is_empty() {
+                    let retry_read_args = json!({ "pages": retry_keys.len(), "retry": true });
+                    send_tool(
+                        tx,
+                        run_id,
+                        "read_pages",
+                        retry_read_args.clone(),
+                        StepStatus::Started,
+                        None,
+                        None,
+                    );
+                    if let Phase::Cancelled = fetch_hits(
+                        reader,
+                        &ranked,
+                        &retry_keys,
+                        &mut fetched,
+                        app_cancel,
+                        chat_cancel,
+                    )
+                    .await
+                    {
+                        cancel_phase(
+                            tx,
+                            run_id,
+                            "read_pages",
+                            retry_read_args,
+                            "verify",
+                            verify_started,
+                            research_started,
+                        );
+                        return;
+                    }
+                }
+
+                let assembled = assemble_sources(&ranked, &fetched, ranking_query);
+                sources = assembled.0;
+                chunks = assembled.1;
+                report = evaluate_evidence(ranking_query, &sources, &chunks);
+            }
+
+            let retry_summary = if retry_batch.errors.is_empty() {
+                format!("retry searched \"{}\"", retry_query.query)
+            } else {
+                format!("retry search failed: {}", short(&retry_batch.errors[0]))
+            };
+            send_tool(
+                tx,
+                run_id,
+                "web_search",
+                retry_args,
+                StepStatus::Done,
+                Some(elapsed_ms(verify_started)),
+                Some(retry_summary),
+            );
+        }
+    }
+
+    if chunks.is_empty() {
+        send_tool(
+            tx,
+            run_id,
+            "verify_evidence",
+            json!({ "retried": retried }),
+            StepStatus::Failed,
+            Some(elapsed_ms(verify_started)),
+            Some("no readable evidence".to_owned()),
+        );
+        send_step(
+            tx,
+            run_id,
+            "verify",
+            StepStatus::Failed,
+            Some(elapsed_ms(verify_started)),
+        );
+        fail_research(
+            tx,
+            run_id,
+            "The research run returned no readable page text. Try a different query or check the local search engines.".to_owned(),
+            elapsed_ms(research_started),
+        );
+        return;
+    }
+
+    let verify_duration = elapsed_ms(verify_started);
+    let weak_note = if report.is_weak() {
+        " · thin evidence; answer will be qualified"
+    } else {
+        " · evidence sufficient"
+    };
+    send_tool(
+        tx,
+        run_id,
+        "verify_evidence",
+        json!({
+            "coverage": report.coverage_percent(),
+            "domains": report.domain_count,
+            "read": report.read_count,
+            "sources": report.source_count,
+            "retried": retried,
+        }),
+        StepStatus::Done,
+        Some(verify_duration),
+        Some(format!("{}{}", report.summary(), weak_note)),
+    );
+    send_step(
+        tx,
+        run_id,
+        "verify",
+        StepStatus::Done,
+        Some(verify_duration),
+    );
+
+    if retried {
+        let total_read_summary = read_summary(fetched.len(), &fetched, sources.len());
+        send_tool(
+            tx,
+            run_id,
+            "read_pages",
+            json!({ "pages": fetched.len(), "adaptive": true }),
+            StepStatus::Done,
+            Some(elapsed_ms(read_started)),
+            Some(total_read_summary),
+        );
+    }
+
+    let _ = tx.send(AppEvent::Sources {
+        run_id: run_id.to_owned(),
+        sources: sources.clone(),
+    });
+
+    let selected = rank_chunks(ranking_query, &chunks, MAX_CONTEXT_CHUNKS);
+    let context = build_context(&sources, &chunks, &selected);
+    let mut system_prompt = build_system_prompt(&context, sources.len());
+    if report.is_weak() {
+        system_prompt.push_str(
+            "\n\nEVIDENCE NOTE: The retrieved evidence is thin or comes from few independent domains. Qualify uncertain claims, do not assert details that the sources do not support, and briefly say what could not be verified. Do not mention this note.",
+        );
+    }
+    let messages = build_messages(system_prompt, history, query);
+
+    let chat_request = StartChatRequest {
+        run_id: run_id.to_owned(),
+        model: model.to_owned(),
+        messages: messages.clone(),
+    };
+    if let Err(error) = validate_chat_request(&chat_request) {
+        fail_research(
+            tx,
+            run_id,
+            format!("The research context could not be prepared: {error}"),
+            elapsed_ms(research_started),
+        );
+        return;
+    }
+
+    send_step(
+        tx,
+        run_id,
+        "research",
+        StepStatus::Done,
+        Some(elapsed_ms(research_started)),
+    );
+
+    let chat_started = Instant::now();
+    send_step(tx, run_id, "chat", StepStatus::Started, None);
+    // Collected only to check whether the model cited anything; small models
+    // often skip inline labels even when instructed.
+    let answer = Arc::new(Mutex::new(String::new()));
+    let outcome = match engine_model.as_ref() {
+        Some((engine_name, engine_path)) => {
+            // App exit must interrupt generation too; mirror the app token into
+            // a child token, exactly like the chat engine path does.
+            let gen_cancel = chat_cancel.child_token();
+            let mirror_cancel = gen_cancel.clone();
+            let app_cancel = app_cancel.clone();
+            tokio::spawn(async move {
+                app_cancel.cancelled().await;
+                mirror_cancel.cancel();
+            });
+            stream_engine_chat(
+                app,
+                tx,
+                run_id,
+                engine_name,
+                engine_path,
+                &messages,
+                gen_cancel,
+                Some(&answer),
+            )
+            .await
+        }
+        None => {
+            stream_chat(
+                client,
+                run_id,
+                model,
+                &messages,
+                context_length,
+                chat_started,
+                tx,
+                chat_cancel,
+                app_cancel,
+                Some(&answer),
+            )
+            .await
+        }
+    };
+    let chat_duration = elapsed_ms(chat_started);
+
+    match outcome {
+        Ok(StreamOutcome::Completed) => {
+            // Guarantee the numbered-citation promise: if the model answered in
+            // prose only, append the sources whose excerpts were in the context.
+            let answer_text = match answer.lock() {
+                Ok(text) => text.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            if !has_citation_labels(&answer_text) {
+                let footer = citation_footer(&sources, &chunks, &selected);
+                if !footer.is_empty() {
+                    let _ = tx.send(AppEvent::Token {
+                        run_id: run_id.to_owned(),
+                        delta: footer,
+                        index: 0,
+                    });
+                }
+            }
+            send_step(tx, run_id, "chat", StepStatus::Done, Some(chat_duration));
+        }
+        Ok(StreamOutcome::Cancelled) => {
+            let _ = tx.send(AppEvent::Error {
+                scope: "research".to_owned(),
+                message: "Generation stopped.".to_owned(),
+                recoverable: true,
+            });
+            send_step(tx, run_id, "chat", StepStatus::Failed, Some(chat_duration));
+        }
+        Err(error) => {
+            let _ = tx.send(AppEvent::Error {
+                scope: "research".to_owned(),
+                message: error,
+                recoverable: true,
+            });
+            send_step(tx, run_id, "chat", StepStatus::Failed, Some(chat_duration));
+        }
+    }
+}
+
+enum Phase<T> {
+    Done(T),
+    Cancelled,
+}
+
+struct SearchBatch {
+    hits: Vec<SearchHit>,
+    errors: Vec<String>,
+}
+
+async fn search_plan(
+    client: &reqwest::Client,
+    queries: &[PlannedQuery],
+    app_cancel: &CancellationToken,
+    chat_cancel: &CancellationToken,
+) -> Phase<SearchBatch> {
+    let mut tasks = JoinSet::new();
+    for (index, query) in queries.iter().enumerate() {
+        let client = client.clone();
+        let query = query.clone();
+        tasks.spawn(async move { (index, search_planned_query(&client, &query).await) });
+    }
+
+    let mut results: Vec<Option<Result<Vec<SearchHit>, String>>> =
+        queries.iter().map(|_| None).collect();
     loop {
         if tasks.is_empty() {
             break;
@@ -259,41 +733,11 @@ async fn run_research(
         let joined = tokio::select! {
             _ = app_cancel.cancelled() => {
                 tasks.abort_all();
-                send_tool(
-                    tx,
-                    run_id,
-                    "read_pages",
-                    json!({ "pages": fetch_count }),
-                    StepStatus::Failed,
-                    Some(elapsed_ms(read_started)),
-                    Some("cancelled".to_owned()),
-                );
-                fail_research(
-                    tx,
-                    run_id,
-                    "Generation stopped.".to_owned(),
-                    elapsed_ms(research_started),
-                );
-                return;
+                return Phase::Cancelled;
             }
             _ = chat_cancel.cancelled() => {
                 tasks.abort_all();
-                send_tool(
-                    tx,
-                    run_id,
-                    "read_pages",
-                    json!({ "pages": fetch_count }),
-                    StepStatus::Failed,
-                    Some(elapsed_ms(read_started)),
-                    Some("cancelled".to_owned()),
-                );
-                fail_research(
-                    tx,
-                    run_id,
-                    "Generation stopped.".to_owned(),
-                    elapsed_ms(research_started),
-                );
-                return;
+                return Phase::Cancelled;
             }
             joined = tasks.join_next() => joined,
         };
@@ -301,21 +745,128 @@ async fn run_research(
             break;
         };
         if let Ok((index, result)) = joined {
-            if let Some(slot) = pages.get_mut(index) {
+            if let Some(slot) = results.get_mut(index) {
                 *slot = Some(result);
             }
         }
     }
 
+    let mut hits = Vec::new();
+    let mut errors = Vec::new();
+    for result in results.into_iter().flatten() {
+        match result {
+            Ok(mut found) => hits.append(&mut found),
+            Err(error) => errors.push(error),
+        }
+    }
+    Phase::Done(SearchBatch { hits, errors })
+}
+
+async fn search_planned_query(
+    client: &reqwest::Client,
+    query: &PlannedQuery,
+) -> Result<Vec<SearchHit>, String> {
+    let primary = search_searxng(
+        client,
+        &query.query,
+        &query.engines,
+        query.time_range.as_deref(),
+    )
+    .await;
+
+    if matches!(&primary, Ok(hits) if !hits.is_empty()) {
+        return primary;
+    }
+
+    // A route can name an engine the user has not enabled, and some engines do
+    // not support a recent time range. A broad general search without a time
+    // filter is the most reliable single fallback; it also keeps research
+    // working with a custom SearXNG configuration.
+    if !query.engines.is_empty() || query.time_range.is_some() {
+        return search_searxng(client, &query.query, &[], None).await;
+    }
+
+    primary
+}
+
+async fn fetch_hits(
+    reader: &reqwest::Client,
+    hits: &[SearchHit],
+    keys: &[String],
+    fetched: &mut HashMap<String, Result<FetchedPage, String>>,
+    app_cancel: &CancellationToken,
+    chat_cancel: &CancellationToken,
+) -> Phase<()> {
+    let mut tasks = JoinSet::new();
+    for key in keys {
+        let Some(hit) = hits.iter().find(|hit| canonical_url_key(&hit.url) == *key) else {
+            continue;
+        };
+        let reader = reader.clone();
+        let url = hit.url.clone();
+        let title = hit.title.clone();
+        let key = key.clone();
+        tasks.spawn(async move { (key, fetch_page(&reader, &url, &title).await) });
+    }
+
+    loop {
+        if tasks.is_empty() {
+            break;
+        }
+        let joined = tokio::select! {
+            _ = app_cancel.cancelled() => {
+                tasks.abort_all();
+                return Phase::Cancelled;
+            }
+            _ = chat_cancel.cancelled() => {
+                tasks.abort_all();
+                return Phase::Cancelled;
+            }
+            joined = tasks.join_next() => joined,
+        };
+        let Some(joined) = joined else {
+            break;
+        };
+        if let Ok((key, result)) = joined {
+            fetched.insert(key, result);
+        }
+    }
+
+    Phase::Done(())
+}
+
+fn next_fetch_keys(
+    hits: &[SearchHit],
+    limit: usize,
+    fetched: &HashMap<String, Result<FetchedPage, String>>,
+) -> Vec<String> {
+    let mut keys = Vec::new();
+    for hit in hits {
+        let key = canonical_url_key(&hit.url);
+        if key.is_empty() || fetched.contains_key(&key) || keys.contains(&key) {
+            continue;
+        }
+        keys.push(key);
+        if keys.len() >= limit {
+            break;
+        }
+    }
+    keys
+}
+
+fn assemble_sources(
+    hits: &[SearchHit],
+    fetched: &HashMap<String, Result<FetchedPage, String>>,
+    query: &str,
+) -> (Vec<ResearchSource>, Vec<Chunk>, usize) {
     let mut sources = Vec::new();
     let mut chunks = Vec::new();
     let mut read_count = 0usize;
+    let mut seen = std::collections::HashSet::new();
 
-    for (index, hit) in hits.iter().enumerate() {
-        let page = pages
-            .get(index)
-            .and_then(|slot| slot.as_ref())
-            .and_then(|result| result.as_ref().ok());
+    for hit in hits {
+        let key = canonical_url_key(&hit.url);
+        let page = fetched.get(&key).and_then(|result| result.as_ref().ok());
         let snippet = if !hit.snippet.is_empty() {
             hit.snippet.clone()
         } else {
@@ -325,8 +876,10 @@ async fn run_research(
         if page.is_none() && snippet.is_empty() {
             continue;
         }
+        if page.is_none() && !text_matches_query(query, &hit.title, &hit.snippet, 2) {
+            continue;
+        }
 
-        let id = u32::try_from(sources.len() + 1).unwrap_or(u32::MAX);
         let title = page
             .map(|page| page.title.trim())
             .filter(|title| !title.is_empty())
@@ -335,11 +888,16 @@ async fn run_research(
         let url = page
             .map(|page| page.final_url.clone())
             .unwrap_or_else(|| hit.url.clone());
+        let final_key = canonical_url_key(&url);
+        if final_key.is_empty() || !seen.insert(final_key) {
+            continue;
+        }
+
+        let id = u32::try_from(sources.len() + 1).unwrap_or(u32::MAX);
         let read = page.is_some();
         if read {
             read_count = read_count.saturating_add(1);
         }
-
         sources.push(ResearchSource {
             id,
             title,
@@ -381,112 +939,67 @@ async fn run_research(
         }
     }
 
-    let failed_pages = fetch_count.saturating_sub(read_count);
-    let read_summary = if failed_pages == 0 {
-        format!("read {read_count} page(s)")
+    (sources, chunks, read_count)
+}
+
+fn read_summary(
+    attempted: usize,
+    fetched: &HashMap<String, Result<FetchedPage, String>>,
+    source_count: usize,
+) -> String {
+    let read = fetched
+        .values()
+        .filter(|result| result.as_ref().is_ok())
+        .count();
+    if read >= attempted {
+        format!("read {read} page(s) for {source_count} source(s)")
     } else {
-        format!("read {read_count}/{fetch_count} pages; used snippets for the rest")
-    };
+        format!(
+            "read {read}/{attempted} pages for {source_count} source(s); used snippets for the rest"
+        )
+    }
+}
+
+fn cancel_phase(
+    tx: &broadcast::Sender<AppEvent>,
+    run_id: &str,
+    tool_name: &str,
+    args: serde_json::Value,
+    step_node: &str,
+    started: Instant,
+    research_started: Instant,
+) {
     send_tool(
         tx,
         run_id,
-        "read_pages",
-        json!({ "pages": fetch_count }),
-        StepStatus::Done,
-        Some(elapsed_ms(read_started)),
-        Some(read_summary),
+        tool_name,
+        args,
+        StepStatus::Failed,
+        Some(elapsed_ms(started)),
+        Some("cancelled".to_owned()),
     );
-
-    if chunks.is_empty() {
-        fail_research(
-            tx,
-            run_id,
-            "The search returned no readable page text. Try a different query.".to_owned(),
-            elapsed_ms(research_started),
-        );
-        return;
-    }
-
-    let _ = tx.send(AppEvent::Sources {
-        run_id: run_id.to_owned(),
-        sources: sources.clone(),
-    });
-
-    let selected = rank_chunks(query, &chunks, MAX_CONTEXT_CHUNKS);
-    let context = build_context(&sources, &chunks, &selected);
-    let system_prompt = build_system_prompt(&context, sources.len());
-    let messages = build_messages(system_prompt, history, query);
-
-    let chat_request = StartChatRequest {
-        run_id: run_id.to_owned(),
-        model: model.to_owned(),
-        messages: messages.clone(),
-    };
-    if let Err(error) = validate_chat_request(&chat_request) {
-        fail_research(
-            tx,
-            run_id,
-            format!("The research context could not be prepared: {error}"),
-            elapsed_ms(research_started),
-        );
-        return;
-    }
-
     send_step(
         tx,
         run_id,
-        "research",
-        StepStatus::Done,
-        Some(elapsed_ms(research_started)),
+        step_node,
+        StepStatus::Failed,
+        Some(elapsed_ms(started)),
     );
-
-    let chat_started = Instant::now();
-    send_step(tx, run_id, "chat", StepStatus::Started, None);
-    let outcome = stream_chat(
-        client,
-        run_id,
-        model,
-        &messages,
-        context_length,
-        chat_started,
+    fail_research(
         tx,
-        chat_cancel,
-        app_cancel,
-    )
-    .await;
-    let chat_duration = elapsed_ms(chat_started);
-
-    match outcome {
-        Ok(StreamOutcome::Completed) => {
-            send_step(tx, run_id, "chat", StepStatus::Done, Some(chat_duration));
-        }
-        Ok(StreamOutcome::Cancelled) => {
-            let _ = tx.send(AppEvent::Error {
-                scope: "ollama".to_owned(),
-                message: "Generation stopped.".to_owned(),
-                recoverable: true,
-            });
-            send_step(tx, run_id, "chat", StepStatus::Failed, Some(chat_duration));
-        }
-        Err(error) => {
-            let _ = tx.send(AppEvent::Error {
-                scope: "ollama".to_owned(),
-                message: error,
-                recoverable: true,
-            });
-            send_step(tx, run_id, "chat", StepStatus::Failed, Some(chat_duration));
-        }
-    }
+        run_id,
+        "Generation stopped.".to_owned(),
+        elapsed_ms(research_started),
+    );
 }
 
 async fn search_searxng(
     client: &reqwest::Client,
-    prompt: &str,
-) -> Result<Vec<crate::research::SearchHit>, String> {
-    let query = search_query(prompt)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    query: &str,
+    engines: &[String],
+    time_range: Option<&str>,
+) -> Result<Vec<SearchHit>, String> {
+    let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
     if query.is_empty() {
         return Err("The research query is empty.".to_owned());
     }
@@ -497,8 +1010,24 @@ async fn search_searxng(
         .query_pairs_mut()
         .append_pair("q", &query)
         .append_pair("format", "json")
-        .append_pair("categories", "general")
         .append_pair("safesearch", "1");
+    if engines.is_empty() {
+        endpoint
+            .query_pairs_mut()
+            .append_pair("categories", "general");
+    } else {
+        // SearXNG applies an explicit engine list when it is sent without a
+        // category filter. Sending both makes the category win and silently
+        // queries every general engine again.
+        endpoint
+            .query_pairs_mut()
+            .append_pair("engines", &engines.join(","));
+    }
+    if let Some(range) = time_range {
+        if matches!(range, "day" | "week" | "month" | "year") {
+            endpoint.query_pairs_mut().append_pair("time_range", range);
+        }
+    }
 
     let response = client
         .get(endpoint)
@@ -534,7 +1063,6 @@ async fn search_searxng(
 
     Ok(normalize_results(parsed, MAX_SEARCH_RESULTS))
 }
-
 struct FetchedPage {
     final_url: String,
     title: String,

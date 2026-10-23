@@ -1,14 +1,19 @@
 # Local research
 
-Research is an explicit mode in the composer. It runs a local SearXNG search,
-reads a bounded number of the returned public pages, ranks excerpts locally with
-BM25, and asks the selected local Ollama model for an answer with numbered
-citations. It is the only path that makes non-loopback requests, and it only
-runs after you press **Research**.
+Research is an explicit mode in the composer. It plans several focused searches,
+routes each one to suitable engines in a local SearXNG instance, merges and
+ranks the results, reads a bounded number of public pages, checks whether the
+evidence covers the question, and asks the selected local model (embedded engine
+or Ollama) for an
+answer with numbered citations. If the first pass is thin it runs one broader
+search and reads at most two more pages. It is the only path that makes
+non-loopback requests, and it only runs after you press **Research**.
 
 ## Prerequisites
 
-- Ollama at `http://127.0.0.1:11434` with at least one local chat model.
+- A selectable local chat model: a GGUF file in the app's models folder
+  (runs on the built-in engine, no server) or Ollama at
+  `http://127.0.0.1:11434` with at least one local chat model.
 - SearXNG at `http://127.0.0.1:8080` with **JSON output enabled**.
 - The app does not install, start, or configure either service. It never accepts
   an alternate endpoint from the webview.
@@ -76,10 +81,26 @@ keyless, independent mix:
 No API key is required for this set. The engines are merged with the shipped
 SearXNG defaults by name, so the two broad defaults stay enabled. Mwmbl and Wiby
 are weighted down (`weight: 0.2`) because they return many results for broad
-queries; without that, they crowd the six-result window. SearXNG itself is open
-source; DuckDuckGo, Brave, and Yep use their own indexes and terms, so “open
-source” describes the aggregator and the open knowledge/index engines, not every
-upstream service.
+queries. SearXNG itself is open source; DuckDuckGo, Brave, and Yep use their own
+indexes and terms, so “open source” describes the aggregator and the open
+knowledge/index engines, not every upstream service.
+
+The app does not query all seven engines identically on every run. The local
+planner classifies the question and uses a different route for each search path:
+
+| Question kind | Typical route |
+| --- | --- |
+| Factual / definition | Wikipedia, Wikidata, Brave, DuckDuckGo |
+| Current / news | Brave, DuckDuckGo, Yep, Wikipedia (with a recent time range) |
+| How-to / install | DuckDuckGo, Brave, Mwmbl, Wikipedia |
+| Comparison | Brave, DuckDuckGo, Wikipedia, Yep |
+| Technical / docs | DuckDuckGo, Brave, Mwmbl, Wikipedia |
+| General | Brave, DuckDuckGo, Wikipedia, Yep |
+
+If a restricted route returns nothing or the instance has one of those engines
+disabled, the app retries that sub-query against the general category without a
+time filter. This also covers engines that reject a recent time range. The
+webview never supplies an engine or time range.
 
 Some engines are intentionally **not** enabled:
 
@@ -106,31 +127,46 @@ SearXNG, then check the instance's **Preferences → Engines** page and logs.
    reachable. Leading commands such as `find` or `tell me about` and trailing
    punctuation are removed from the search query only; the full prompt still
    goes to the model.
-3. The run emits a **Web search** step, then **Read pages**, then fills the
-   left-hand **Sources** panel. The local model streams the answer with `[n]`
-   citations, but the source list is not repeated under the chat message. The
-   prompt tells the model not to append a separate bibliography; the panel owns
-   that list.
-4. **Stop** cancels search, page reads, or generation. Search and page tasks are
-   aborted, not just hidden.
-5. Source cards show the title, domain, snippet, whether the page was actually
+3. The run emits **Query planning**, **Engine search**, **Page reading**, and
+   **Evidence check** stages, then fills the left-hand **Sources** panel. The
+   local model streams the answer with `[n]` citations. When the model writes
+   prose without any label, the app appends a short
+   `Sources: [n] Title (domain)` footer listing the sources whose excerpts were
+   in the evidence context (up to five), then the panel keeps the full list. The
+   prompt does not ask the model to append a bibliography; the runner owns the
+   fallback.
+4. If the evidence check finds thin coverage or only one domain, the run performs
+   one broader search and reads up to two more pages. It does not loop
+   indefinitely.
+5. **Stop** cancels planning, search, page reads, retries, or generation. Search
+   and page tasks are aborted, not just hidden.
+6. Source cards show the title, domain, snippet, whether the page was actually
    read, and a **Copy** action. The app never opens an external browser or
    webview.
 
 Citations are bounded to the sources returned in that run. If a small model
 writes an unknown number such as `[7]` when only two sources exist, the UI drops
 the invalid label and keeps valid labels from the same group; the prompt also
-states the exact valid label set. This is a display safety net, not a guarantee
-about a model's reasoning.
+states the exact valid label set. If the model emits no label at all, the runner
+appends the numbered `Sources:` footer described above. This is a display and
+labelling safety net, not a guarantee about a model's reasoning.
 
 ## What the reader does
 
 Only after a research request:
 
-- Queries `GET http://127.0.0.1:8080/search` with JSON, general category, and
-  safe search on. At most 6 results are normalized.
-- Selects up to 4 result URLs. The webview never supplies or overrides a page
-  URL.
+- Builds up to three planned sub-queries locally. The planner uses question
+  shape, focused terms, and an intent-specific engine route; it does not call a
+  second model or send prompts anywhere except the fixed local SearXNG endpoint.
+- Queries `GET http://127.0.0.1:8080/search` with JSON and safe search on, and
+  keeps at most 6 normalized results per sub-query. An intent route sends an
+  explicit engine list; a broad fallback sends the general category. A route
+  that returns nothing is retried once with the broad fallback.
+- Merges duplicate URLs (ignoring fragments, tracking parameters, `www.`, and
+  trailing slashes), ranks up to 12 candidates by relevance, engine trust, and
+  domain quality, then diversifies by domain and engine.
+- Selects up to 6 result URLs, plus at most 2 more if the evidence check is
+  weak. The webview never supplies or overrides a page URL.
 - Reads each URL over HTTP or HTTPS with redirects disabled at the HTTP client.
   Redirects are followed manually so every hop is revalidated.
 - Rejects non-HTTP(S), embedded credentials, `localhost`, `.local`, `.internal`,
@@ -142,9 +178,14 @@ Only after a research request:
 - Sends no cookies, credentials, proxy configuration, or API keys. It does not
   execute JavaScript, load images/subresources, or use a browser engine.
 - Caps each response at 2.5 MB, extracted text at 180,000 characters, redirects
-  at 4, and page reads at 4. DNS and body reads have timeouts.
+  at 4, and page reads at 8 including the retry. DNS and body reads have
+  timeouts.
 - Extracts readable HTML or plain text locally. JavaScript-only pages fall back
   to the search-engine snippet instead of running page scripts.
+- Measures local evidence coverage against the question terms and counts
+  independent domains. If coverage is below 30%, no page was read, or only one
+  domain was found, it retries once and then tells the model to qualify the
+  answer if the evidence is still thin.
 - Ranks chunks with in-memory BM25, limits how much one source can dominate the
   context, and asks the local model to answer only from those excerpts.
 
@@ -160,11 +201,14 @@ address would require a custom connector and is a later hardening step.
 | --- | --- |
 | Search query sent to SearXNG | 500 characters (after command/punctuation cleanup) |
 | Research prompt | 4,000 characters |
-| Search results kept | 6 |
-| Pages read per run | 4 |
+| Planned sub-queries | 3 |
+| Results normalized per sub-query | 6 |
+| Candidate sources after merge | 12 |
+| Pages read per run | 6, plus 2 on the retry |
+| Evidence retries | 1 |
 | Page body | 2.5 MB |
 | Extracted text per page | 180,000 characters |
-| Context chunks | 6 |
+| Context chunks | 8 |
 | Redirects | 4 |
 | Research history messages | 16 |
 

@@ -20,16 +20,35 @@ pub const SEARXNG_BASE_URL: &str = "http://127.0.0.1:8080";
 
 pub const MAX_SEARCH_QUERY_CHARS: usize = 500;
 pub const MAX_RESEARCH_PROMPT_CHARS: usize = 4_000;
+/// Results requested from each planned sub-query.
 pub const MAX_SEARCH_RESULTS: usize = 6;
-pub const MAX_FETCHED_PAGES: usize = 4;
+/// Unique candidate sources kept after merging the sub-query result sets.
+pub const MAX_CANDIDATE_SOURCES: usize = 12;
+pub const MAX_FETCHED_PAGES: usize = 6;
+/// Extra pages read only when the first evidence pass is weak.
+pub const MAX_RETRY_PAGES: usize = 2;
 pub const MAX_PAGE_BYTES: usize = 2_500_000;
 pub const MAX_PAGE_TEXT_CHARS: usize = 180_000;
 pub const MAX_SOURCE_SNIPPET_CHARS: usize = 420;
-pub const MAX_CONTEXT_CHUNKS: usize = 6;
+pub const MAX_CONTEXT_CHUNKS: usize = 8;
 pub const CHUNK_CHARS: usize = 1_400;
 pub const CHUNK_OVERLAP: usize = 180;
 pub const MAX_RESEARCH_HISTORY_MESSAGES: usize = 16;
 pub const MAX_REDIRECTS: usize = 4;
+pub const MAX_PLANNED_QUERIES: usize = 3;
+
+/// SearXNG engines used for ordinary web research. The instance is still free
+/// to add or remove engines; a restricted query falls back to the general
+/// category when the route returns nothing.
+const GENERAL_ENGINES: [&str; 7] = [
+    "brave",
+    "duckduckgo",
+    "mwmbl",
+    "wiby",
+    "wikidata",
+    "wikipedia",
+    "yep",
+];
 
 const MAX_TITLE_CHARS: usize = 200;
 const MAX_URL_CHARS: usize = 2_048;
@@ -71,6 +90,89 @@ pub struct ResearchSource {
     /// SearXNG engine that produced this result, useful for transparency.
     pub engine: String,
     pub read: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryIntent {
+    Factual,
+    Current,
+    HowTo,
+    Comparison,
+    Technical,
+    General,
+}
+
+impl QueryIntent {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Factual => "factual",
+            Self::Current => "current",
+            Self::HowTo => "how-to",
+            Self::Comparison => "comparison",
+            Self::Technical => "technical",
+            Self::General => "general",
+        }
+    }
+}
+
+/// One planned search request. The command layer sends only these strings to
+/// the fixed local SearXNG endpoint; the webview cannot supply engines or time
+/// ranges.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlannedQuery {
+    pub query: String,
+    pub engines: Vec<String>,
+    pub purpose: String,
+    pub time_range: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ResearchPlan {
+    pub intent: QueryIntent,
+    pub queries: Vec<PlannedQuery>,
+}
+
+/// A local, deterministic assessment of whether the retrieved text actually
+/// covers the question and comes from more than one independent domain.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvidenceReport {
+    pub source_count: usize,
+    pub chunk_count: usize,
+    pub read_count: usize,
+    pub domain_count: usize,
+    pub coverage: f64,
+}
+
+impl EvidenceReport {
+    pub fn coverage_percent(&self) -> u32 {
+        let percent = (self.coverage * 100.0).round();
+        if percent.is_finite() {
+            percent.clamp(0.0, 100.0) as u32
+        } else {
+            0
+        }
+    }
+
+    /// Thin evidence is not fatal: the answer prompt is told to qualify it.
+    /// It is, however, enough to justify one broader retrieval pass.
+    pub fn is_weak(&self) -> bool {
+        self.source_count == 0
+            || self.chunk_count == 0
+            || self.read_count == 0
+            || self.domain_count < 2
+            || self.coverage < 0.30
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "{}/{} pages · {} domains · {}% coverage",
+            self.read_count,
+            self.source_count,
+            self.domain_count,
+            self.coverage_percent()
+        )
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -253,6 +355,289 @@ pub fn search_query(prompt: &str) -> String {
     }
 }
 
+/// Build a small, local research plan. This is deliberately deterministic:
+/// classification is cheap, works without a second model call, and keeps the
+/// retrieval stage testable. The plan still includes several searches and a
+/// different engine route for each kind of question.
+pub fn plan_research(prompt: &str) -> ResearchPlan {
+    let intent = detect_intent(prompt);
+    let base = search_query(prompt);
+    let mut plan = ResearchPlan {
+        intent,
+        queries: Vec::new(),
+    };
+    if base.is_empty() {
+        return plan;
+    }
+
+    push_planned(
+        &mut plan,
+        &base,
+        engines_for(intent, "primary"),
+        "primary",
+        time_range_for(intent, "primary"),
+    );
+
+    let focus = focus_query(prompt);
+    if !focus.is_empty() {
+        push_planned(
+            &mut plan,
+            &focus,
+            engines_for(intent, "focus"),
+            "focus",
+            None,
+        );
+    }
+
+    if plan.queries.len() < MAX_PLANNED_QUERIES {
+        let (variant, purpose) = variant_query(&base, intent);
+        if !variant.is_empty() {
+            push_planned(
+                &mut plan,
+                &variant,
+                engines_for(intent, purpose),
+                purpose,
+                time_range_for(intent, purpose),
+            );
+        }
+    }
+
+    // Very short questions (for example "earth") do not produce a useful focus
+    // query. Add one broader variant so even those get a second retrieval path.
+    if plan.queries.len() == 1 {
+        let fallback = format!("{base} overview");
+        push_planned(
+            &mut plan,
+            &fallback,
+            engines_for(intent, "variant"),
+            "overview",
+            None,
+        );
+    }
+
+    plan
+}
+
+fn detect_intent(prompt: &str) -> QueryIntent {
+    let lower = prompt.to_lowercase();
+    let words = words(&lower);
+    let has = |term: &str| words.iter().any(|word| word == term);
+    let has_any = |terms: &[&str]| terms.iter().any(|term| has(term));
+    let phrase = |needle: &str| lower.contains(needle);
+
+    if has_any(&[
+        "vs",
+        "versus",
+        "compare",
+        "comparison",
+        "difference",
+        "differences",
+        "better",
+        "worse",
+        "pros",
+        "cons",
+    ]) || phrase("compared to")
+    {
+        QueryIntent::Comparison
+    } else if has_any(&[
+        "latest",
+        "today",
+        "current",
+        "currently",
+        "news",
+        "recent",
+        "recently",
+        "now",
+        "price",
+        "prices",
+        "weather",
+        "stock",
+        "release",
+    ]) {
+        QueryIntent::Current
+    } else if phrase("how to")
+        || has_any(&[
+            "guide",
+            "tutorial",
+            "install",
+            "setup",
+            "configure",
+            "fix",
+            "steps",
+            "step",
+        ])
+    {
+        QueryIntent::HowTo
+    } else if has_any(&[
+        "what",
+        "who",
+        "when",
+        "where",
+        "why",
+        "which",
+        "define",
+        "definition",
+        "meaning",
+        "history",
+        "capital",
+        "population",
+        "explain",
+    ]) {
+        QueryIntent::Factual
+    } else if has_any(&[
+        "rust",
+        "python",
+        "typescript",
+        "javascript",
+        "api",
+        "code",
+        "cargo",
+        "npm",
+        "server",
+        "database",
+        "sql",
+        "linux",
+        "windows",
+        "macos",
+        "docker",
+        "git",
+        "http",
+        "json",
+        "algorithm",
+        "programming",
+        "software",
+        "framework",
+        "library",
+    ]) {
+        QueryIntent::Technical
+    } else {
+        QueryIntent::General
+    }
+}
+
+fn words(text: &str) -> Vec<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn focus_query(prompt: &str) -> String {
+    let mut selected: Vec<String> = Vec::new();
+    for term in tokenize(prompt) {
+        if selected.iter().any(|existing| existing == &term) {
+            continue;
+        }
+        selected.push(term);
+        if selected.len() >= 8 {
+            break;
+        }
+    }
+
+    if selected.len() < 3 {
+        String::new()
+    } else {
+        selected.join(" ")
+    }
+}
+
+fn variant_query(base: &str, intent: QueryIntent) -> (String, &'static str) {
+    let lower = base.to_lowercase();
+    match intent {
+        QueryIntent::Factual if !lower.contains("definition") && !lower.contains("meaning") => {
+            (format!("{base} definition"), "variant")
+        }
+        QueryIntent::Current if !lower.contains("latest") && !lower.contains("news") => {
+            (format!("{base} latest"), "variant")
+        }
+        QueryIntent::HowTo if !lower.contains("guide") && !lower.contains("tutorial") => {
+            (format!("{base} guide"), "variant")
+        }
+        QueryIntent::Comparison if !lower.contains("comparison") => {
+            (format!("{base} comparison"), "variant")
+        }
+        QueryIntent::Technical if !lower.contains("documentation") && !lower.contains("docs") => {
+            (format!("{base} documentation"), "variant")
+        }
+        QueryIntent::General if !lower.contains("overview") => {
+            (format!("{base} overview"), "variant")
+        }
+        _ => (String::new(), "variant"),
+    }
+}
+
+fn engines_for(intent: QueryIntent, purpose: &str) -> Vec<String> {
+    let names: &[&str] = match (intent, purpose) {
+        (QueryIntent::Factual, "variant") => &["wikipedia", "wikidata", "brave"],
+        (QueryIntent::Current, "variant") => &["brave", "duckduckgo", "yep"],
+        (QueryIntent::HowTo, "variant") => &["duckduckgo", "brave", "mwmbl"],
+        (QueryIntent::Comparison, "variant") => &["brave", "duckduckgo", "wikipedia", "yep"],
+        (QueryIntent::Technical, "variant") => &["duckduckgo", "brave", "mwmbl", "wikipedia"],
+        _ => match intent {
+            QueryIntent::Factual => &["wikipedia", "wikidata", "brave", "duckduckgo"],
+            QueryIntent::Current => &["brave", "duckduckgo", "yep", "wikipedia"],
+            QueryIntent::HowTo => &["duckduckgo", "brave", "mwmbl", "wikipedia"],
+            QueryIntent::Comparison => &["brave", "duckduckgo", "wikipedia", "yep"],
+            QueryIntent::Technical => &["duckduckgo", "brave", "mwmbl", "wikipedia"],
+            QueryIntent::General => &GENERAL_ENGINES[..],
+        },
+    };
+
+    names.iter().map(|name| (*name).to_owned()).collect()
+}
+
+fn time_range_for(intent: QueryIntent, purpose: &str) -> Option<String> {
+    match (intent, purpose) {
+        (QueryIntent::Current, "primary") => Some("year".to_owned()),
+        (QueryIntent::Current, "variant") => Some("month".to_owned()),
+        _ => None,
+    }
+}
+
+fn push_planned(
+    plan: &mut ResearchPlan,
+    query: &str,
+    engines: Vec<String>,
+    purpose: &str,
+    time_range: Option<String>,
+) {
+    if plan.queries.len() >= MAX_PLANNED_QUERIES {
+        return;
+    }
+    let query = query.trim();
+    let chars = query.chars().count();
+    if !(2..=MAX_SEARCH_QUERY_CHARS).contains(&chars) {
+        return;
+    }
+    let key = query_key(query);
+    if key.is_empty()
+        || plan
+            .queries
+            .iter()
+            .any(|existing| query_key(&existing.query) == key)
+    {
+        return;
+    }
+
+    plan.queries.push(PlannedQuery {
+        query: query.to_owned(),
+        engines,
+        purpose: purpose.to_owned(),
+        time_range,
+    });
+}
+
+fn query_key(query: &str) -> String {
+    let mut terms = tokenize(query);
+    terms.sort();
+    terms.dedup();
+    if terms.is_empty() {
+        query.trim().to_lowercase()
+    } else {
+        terms.join(" ")
+    }
+}
+
 pub fn normalize_results(response: SearxResponse, limit: usize) -> Vec<SearchHit> {
     let limit = limit.min(MAX_SEARCH_RESULTS);
     let mut seen = HashSet::new();
@@ -300,6 +685,389 @@ pub fn normalize_results(response: SearxResponse, limit: usize) -> Vec<SearchHit
     }
 
     hits
+}
+
+/// A stable key for duplicate detection. Tracking parameters, fragments, a
+/// leading `www.`, a trailing slash, and the http/https choice do not change the
+/// key, so the same article found by several engines is read once.
+pub fn canonical_url_key(raw: &str) -> String {
+    let Ok(url) = Url::parse(raw.trim()) else {
+        return String::new();
+    };
+    let host = url
+        .host_str()
+        .unwrap_or_default()
+        .trim_end_matches('.')
+        .trim_start_matches("www.")
+        .to_ascii_lowercase();
+    if host.is_empty() {
+        return String::new();
+    }
+
+    let port = url
+        .port()
+        .map(|value| format!(":{value}"))
+        .unwrap_or_default();
+    let path = url.path().trim_end_matches('/');
+    let mut key = format!("{host}{port}{path}");
+
+    let mut pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(name, _)| !is_tracking_parameter(name))
+        .map(|(name, value)| (name.to_ascii_lowercase(), value.into_owned()))
+        .collect();
+    pairs.sort();
+    if !pairs.is_empty() {
+        key.push('?');
+        for (index, (name, value)) in pairs.iter().enumerate() {
+            if index > 0 {
+                key.push('&');
+            }
+            key.push_str(name);
+            key.push('=');
+            key.push_str(value);
+        }
+    }
+
+    key
+}
+
+fn is_tracking_parameter(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("utm_")
+        || matches!(
+            name.as_str(),
+            "fbclid"
+                | "gclid"
+                | "dclid"
+                | "msclkid"
+                | "mc_cid"
+                | "mc_eid"
+                | "ref"
+                | "ref_src"
+                | "ref_url"
+                | "source"
+                | "spm"
+                | "igshid"
+                | "yclid"
+                | "mkt_tok"
+        )
+}
+
+pub fn dedupe_hits(hits: Vec<SearchHit>) -> Vec<SearchHit> {
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut unique: Vec<SearchHit> = Vec::new();
+
+    for hit in hits {
+        let key = canonical_url_key(&hit.url);
+        if key.is_empty() {
+            continue;
+        }
+        if let Some(index) = seen.get(&key).copied() {
+            if let Some(existing) = unique.get_mut(index) {
+                if existing.snippet.chars().count() < hit.snippet.chars().count() {
+                    existing.snippet = hit.snippet;
+                }
+                if existing.title == domain_for(&existing.url) && !hit.title.is_empty() {
+                    existing.title = hit.title;
+                }
+                if existing.url.starts_with("http://") && hit.url.starts_with("https://") {
+                    existing.url = hit.url;
+                }
+                if existing.engine.is_empty() {
+                    existing.engine = hit.engine;
+                }
+            }
+            continue;
+        }
+        seen.insert(key, unique.len());
+        unique.push(hit);
+    }
+
+    unique
+}
+
+/// Merge and rank candidate sources. Relevance is weighted by title, snippet,
+/// URL, engine trust and a small set of domain-quality signals. Selection is
+/// then diversified by domain and engine so one site cannot fill the panel.
+pub fn rank_hits(query: &str, hits: Vec<SearchHit>, limit: usize) -> Vec<SearchHit> {
+    if hits.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let mut terms = tokenize(query);
+    terms.sort();
+    terms.dedup();
+
+    let deduped = dedupe_hits(hits);
+    let required_terms = terms.len().min(2);
+    let mut filtered: Vec<SearchHit> = deduped
+        .iter()
+        .filter(|hit| hit_term_matches(&terms, hit) >= required_terms)
+        .cloned()
+        .collect();
+    // Do not throw away a small result set just because every result is a weak
+    // lexical match; the answer prompt will still be told to qualify it.
+    if filtered.is_empty() {
+        filtered = deduped;
+    }
+
+    let mut remaining: Vec<(SearchHit, f64)> = filtered
+        .into_iter()
+        .map(|hit| {
+            let mut score = hit_relevance(&terms, &hit)
+                + engine_trust(&hit.engine) * 0.15
+                + domain_quality(&hit.url);
+            if !hit.snippet.is_empty() {
+                score += 0.05;
+            }
+            (hit, score)
+        })
+        .collect();
+    remaining.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.url.cmp(&right.0.url))
+    });
+
+    let limit = limit.min(remaining.len());
+    let mut selected = Vec::with_capacity(limit);
+    let mut domain_counts: HashMap<String, usize> = HashMap::new();
+    let mut engine_counts: HashMap<String, usize> = HashMap::new();
+
+    while selected.len() < limit && !remaining.is_empty() {
+        let mut best_index: Option<usize> = None;
+        let mut best_score = f64::NEG_INFINITY;
+
+        for (index, (hit, base_score)) in remaining.iter().enumerate() {
+            let domain = domain_for(&hit.url);
+            let domain_count = *domain_counts.get(&domain).unwrap_or(&0);
+            if domain_count >= 2 {
+                continue;
+            }
+            let engine = hit.engine.to_ascii_lowercase();
+            let engine_count = *engine_counts.get(&engine).unwrap_or(&0);
+            let diversity = if domain_count == 0 { 0.18 } else { 0.0 }
+                + if engine_count == 0 { 0.06 } else { 0.0 };
+            let score = *base_score + diversity;
+            if best_index.is_none() || score > best_score {
+                best_index = Some(index);
+                best_score = score;
+            }
+        }
+
+        let Some(index) = best_index else {
+            break;
+        };
+        let (hit, _) = remaining.remove(index);
+        *domain_counts.entry(domain_for(&hit.url)).or_default() += 1;
+        *engine_counts
+            .entry(hit.engine.to_ascii_lowercase())
+            .or_default() += 1;
+        selected.push(hit);
+    }
+
+    // If domain caps or tiny result sets stopped the loop early, fill the rest
+    // with the best remaining candidates. This only affects very small result
+    // sets; normal searches finish in the diversified loop.
+    if selected.len() < limit {
+        for (hit, _) in remaining {
+            selected.push(hit);
+            if selected.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    selected
+}
+
+fn hit_term_matches(terms: &[String], hit: &SearchHit) -> usize {
+    if terms.is_empty() {
+        return 0;
+    }
+    let title = tokenize(&hit.title);
+    let snippet = tokenize(&hit.snippet);
+    let url = tokenize(&hit.url);
+    let haystack: Vec<&str> = title
+        .iter()
+        .chain(snippet.iter())
+        .chain(url.iter())
+        .map(String::as_str)
+        .collect();
+
+    terms
+        .iter()
+        .filter(|term| haystack.contains(&term.as_str()))
+        .count()
+}
+
+fn hit_relevance(terms: &[String], hit: &SearchHit) -> f64 {
+    if terms.is_empty() {
+        return 0.5;
+    }
+
+    let title = tokenize(&hit.title);
+    let snippet = tokenize(&hit.snippet);
+    let url = tokenize(&hit.url);
+    let mut matched = 0.0;
+    for term in terms {
+        if title.iter().any(|word| word == term) {
+            matched += 2.0;
+        }
+        if snippet.iter().any(|word| word == term) {
+            matched += 1.0;
+        }
+        if url.iter().any(|word| word == term) {
+            matched += 0.3;
+        }
+    }
+
+    (matched / (terms.len() as f64 * 2.0)).clamp(0.0, 1.0)
+}
+
+fn engine_trust(engine: &str) -> f64 {
+    let engine = engine.to_ascii_lowercase();
+    if engine.contains("wikipedia") || engine.contains("wikidata") {
+        1.15
+    } else if engine.contains("brave") || engine.contains("duckduckgo") {
+        1.0
+    } else if engine.contains("yep") {
+        0.9
+    } else if engine.contains("mwmbl") {
+        0.8
+    } else if engine.contains("wiby") {
+        0.75
+    } else {
+        0.85
+    }
+}
+
+fn domain_quality(url: &str) -> f64 {
+    let domain = domain_for(url).to_ascii_lowercase();
+    let path = Url::parse(url)
+        .map(|parsed| parsed.path().to_ascii_lowercase())
+        .unwrap_or_default();
+    let mut score = 0.0;
+
+    if domain == "wikipedia.org" || domain.ends_with(".wikipedia.org") {
+        score += 0.25;
+    }
+    if domain.ends_with(".gov") || domain.ends_with(".edu") {
+        score += 0.20;
+    }
+    if domain == "developer.mozilla.org" || domain == "github.com" || domain.starts_with("docs.") {
+        score += 0.12;
+    }
+    if matches!(
+        domain.as_str(),
+        "facebook.com"
+            | "x.com"
+            | "twitter.com"
+            | "instagram.com"
+            | "tiktok.com"
+            | "pinterest.com"
+            | "linkedin.com"
+            | "reddit.com"
+    ) {
+        score -= 0.10;
+    }
+    if path.ends_with(".pdf") {
+        score -= 0.08;
+    }
+
+    score
+}
+
+/// Measure whether the retrieved text actually covers the question and whether
+/// independent domains agree that it exists. This is intentionally local and
+/// deterministic; it never asks a model to grade its own evidence.
+pub fn evaluate_evidence(
+    query: &str,
+    sources: &[ResearchSource],
+    chunks: &[Chunk],
+) -> EvidenceReport {
+    let mut terms = tokenize(query);
+    terms.sort();
+    terms.dedup();
+
+    let chunk_terms: Vec<HashSet<String>> = chunks
+        .iter()
+        .map(|chunk| tokenize(&chunk.text).into_iter().collect())
+        .collect();
+    let covered = terms
+        .iter()
+        .filter(|term| chunk_terms.iter().any(|set| set.contains(term.as_str())))
+        .count();
+    let coverage = if terms.is_empty() {
+        if chunks.is_empty() {
+            0.0
+        } else {
+            1.0
+        }
+    } else {
+        covered as f64 / terms.len() as f64
+    };
+
+    let domains: HashSet<&str> = sources
+        .iter()
+        .map(|source| source.domain.as_str())
+        .filter(|domain| !domain.is_empty())
+        .collect();
+
+    EvidenceReport {
+        source_count: sources.len(),
+        chunk_count: chunks.len(),
+        read_count: sources.iter().filter(|source| source.read).count(),
+        domain_count: domains.len(),
+        coverage,
+    }
+}
+
+/// A cheap relevance check for unread search snippets. Snippets are useful when
+/// a page cannot be fetched, but a snippet that matches only one generic term
+/// should not be shown as evidence or included in the answer prompt.
+pub fn text_matches_query(query: &str, title: &str, snippet: &str, min_terms: usize) -> bool {
+    let mut terms = tokenize(query);
+    terms.sort();
+    terms.dedup();
+    if terms.is_empty() {
+        return true;
+    }
+
+    let haystack = tokenize(&format!("{title} {snippet}"));
+    let matched = terms
+        .iter()
+        .filter(|term| haystack.iter().any(|word| word.as_str() == term.as_str()))
+        .count();
+    matched >= min_terms.min(terms.len())
+}
+
+/// Choose a different broad query for the one verification retry. It must not
+/// duplicate any query already in the plan, otherwise the retry would just fetch
+/// the same result set again.
+pub fn retry_query(plan: &ResearchPlan) -> String {
+    let Some(primary) = plan.queries.first() else {
+        return String::new();
+    };
+    let base = primary.query.as_str();
+    let existing: HashSet<String> = plan
+        .queries
+        .iter()
+        .map(|query| query_key(&query.query))
+        .collect();
+
+    for suffix in ["overview", "explained", "reference", "guide", "facts"] {
+        let candidate = format!("{base} {suffix}");
+        if candidate.chars().count() <= MAX_SEARCH_QUERY_CHARS
+            && !existing.contains(&query_key(&candidate))
+        {
+            return candidate;
+        }
+    }
+
+    String::new()
 }
 
 /// Validate the shape of a URL before DNS resolution. Literal loopback/private
@@ -955,6 +1723,66 @@ pub fn build_context(sources: &[ResearchSource], chunks: &[Chunk], selected: &[u
     context.trim_end().to_owned()
 }
 
+/// True when the answer already contains at least one `[n]` citation label.
+pub fn has_citation_labels(answer: &str) -> bool {
+    let bytes = answer.as_bytes();
+    let mut index = 0;
+    while index + 2 < bytes.len() {
+        if bytes[index] == b'[' {
+            let mut cursor = index + 1;
+            let mut digits = 0;
+            while cursor < bytes.len()
+                && (bytes[cursor].is_ascii_digit()
+                    || bytes[cursor] == b','
+                    || bytes[cursor] == b' ')
+            {
+                if bytes[cursor].is_ascii_digit() {
+                    digits += 1;
+                }
+                cursor += 1;
+            }
+            if digits > 0 && cursor < bytes.len() && bytes[cursor] == b']' {
+                return true;
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
+/// Automatic citation footer for answers that ignored the inline rule.
+///
+/// Small models sometimes paraphrase every sentence without a `[n]` label even
+/// when asked. The app still promises numbered citations, so the runner appends
+/// the sources whose excerpts were actually in the evidence context.
+pub fn citation_footer(sources: &[ResearchSource], chunks: &[Chunk], selected: &[usize]) -> String {
+    let mut ids: Vec<u32> = Vec::new();
+    for index in selected {
+        if let Some(chunk) = chunks.get(*index) {
+            if !ids.contains(&chunk.source_id) {
+                ids.push(chunk.source_id);
+            }
+        }
+    }
+
+    let parts: Vec<String> = ids
+        .iter()
+        .take(5)
+        .filter_map(|id| {
+            sources
+                .iter()
+                .find(|source| source.id == *id)
+                .map(|source| format!("[{id}] {} ({})", source.title, source.domain))
+        })
+        .collect();
+
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nSources: {}.", parts.join("; "))
+    }
+}
+
 pub fn build_system_prompt(context: &str, source_count: usize) -> String {
     let labels = (1..=source_count)
         .map(|id| format!("[{id}]"))
@@ -962,13 +1790,16 @@ pub fn build_system_prompt(context: &str, source_count: usize) -> String {
         .join(", ");
     format!(
         "You are a local research assistant. Answer the user's question using only the numbered sources below.\n\
-         The user has already run a web search, and the numbered sources are its results. Do not say you cannot search the web, access the internet, or perform real-world actions, and do not talk about being a language model. Treat a short or imperative question (for example \"find X\") as a request for factual information about X.\n\
+         The user has already run web research, and the numbered sources are the result of several planned searches. Do not say you cannot search the web, access the internet, or perform real-world actions, and do not talk about being a language model. Treat a short or imperative question (for example \"find X\") as a request for factual information about X.\n\
          There are exactly {source_count} sources. The only valid citation labels are {labels}.\n\
          Cite factual claims with a label immediately after the claim, for example [1]. You may cite several sources in one group, for example [1, 2].\n\
          Never cite a number outside that set, and never treat a bracketed number inside source text as a citation label.\n\
          Do not end with a \"Sources\" section, bibliography, or list of source titles and URLs. The app already displays the numbered sources in the left Sources panel; keep only inline citations in the answer.\n\
+         Prefer claims that are supported by more than one independent source. If sources disagree, say so instead of silently choosing one. Do not imply that you verified something outside these sources. Refer to sources by citation number. Only name a publication if its listed title clearly matches the claim, and never attribute a statement to a publication that is not in the source list. If a sentence combines facts from different sources, cite each one.\n\
          Base every factual claim on the sources. If they are unrelated or do not contain enough information, say briefly that the search did not return usable information, name what is missing, and do not invent an answer or cite unrelated sources.\n\
          Never invent a source, URL, quote, or fact. Do not use outside knowledge as a source.\n\
+         Answer directly in two to four complete sentences in your own words. Never reply with a sentence copied verbatim from a source or with a list of source titles. If the question is ambiguous, answer the most likely interpretation and briefly say what you assumed.\n\
+         Example of the required format: The process was first documented in the 1950s [1], and later work confirmed the same mechanism across metals [2].\n\
          Keep the answer concise, well organized, and in the same language as the question.\n\n\
          SOURCES\n\
          {context}\n\n\
@@ -989,7 +1820,12 @@ pub fn build_messages(
     messages.extend(history.iter().cloned());
     messages.push(ChatMessage {
         role: "user".to_owned(),
-        content: query.trim().to_owned(),
+        // A short reminder in the final turn: with a long source-filled system
+        // prompt, small models otherwise answer without inline [n] labels.
+        content: format!(
+            "{}\n\nCite each factual claim with the matching source label, for example [1]. Answer in your own words.",
+            query.trim()
+        ),
     });
     messages
 }
@@ -1182,8 +2018,9 @@ mod tests {
         let prompt = build_system_prompt("[1] A\n[2] B", 2);
         assert!(prompt.contains("There are exactly 2 sources"));
         assert!(prompt.contains("[1], [2]"));
-        assert!(prompt.contains("already run a web search"));
+        assert!(prompt.contains("already run web research"));
         assert!(prompt.contains("Treat a short or imperative question"));
+        assert!(prompt.contains("more than one independent source"));
         assert!(prompt.contains("Do not write any other number in brackets"));
         assert!(prompt.contains("Do not end with a \"Sources\" section"));
 
@@ -1268,5 +2105,256 @@ mod tests {
             messages,
         };
         assert!(crate::ollama::validate_chat_request(&request).is_ok());
+    }
+
+    fn hit(url: &str, title: &str, snippet: &str, engine: &str) -> SearchHit {
+        SearchHit {
+            title: title.into(),
+            url: url.into(),
+            snippet: snippet.into(),
+            engine: engine.into(),
+        }
+    }
+
+    fn source(id: u32, domain: &str, read: bool) -> ResearchSource {
+        ResearchSource {
+            id,
+            title: format!("Source {id}"),
+            url: format!("https://{domain}/page"),
+            domain: domain.into(),
+            snippet: "A snippet".into(),
+            engine: "test".into(),
+            read,
+        }
+    }
+
+    #[test]
+    fn plans_several_queries_and_routes_engines_by_intent() {
+        let factual = plan_research("What is the capital of France?");
+        assert_eq!(factual.intent, QueryIntent::Factual);
+        assert!(factual.queries.len() >= 2);
+        assert!(factual
+            .queries
+            .iter()
+            .any(|query| query.engines.iter().any(|engine| engine == "wikipedia")));
+        assert!(factual
+            .queries
+            .iter()
+            .all(|query| query.query.chars().count() <= MAX_SEARCH_QUERY_CHARS));
+
+        let comparison = plan_research("Compare Rust and Go for a local web server");
+        assert_eq!(comparison.intent, QueryIntent::Comparison);
+        assert!(comparison.queries.len() >= 2);
+        assert!(comparison
+            .queries
+            .iter()
+            .any(|query| query.query.to_lowercase().contains("comparison")));
+
+        let how_to = plan_research("How to install Rust on Windows");
+        assert_eq!(how_to.intent, QueryIntent::HowTo);
+        assert!(how_to
+            .queries
+            .iter()
+            .any(|query| query.query.to_lowercase().contains("guide")));
+
+        let current = plan_research("latest AI news");
+        assert_eq!(current.intent, QueryIntent::Current);
+        assert!(current.queries.len() >= 2);
+        assert!(current
+            .queries
+            .iter()
+            .any(|query| query.time_range.is_some()));
+
+        let technical = plan_research("Rust ownership documentation");
+        assert_eq!(technical.intent, QueryIntent::Technical);
+        assert!(technical.queries.len() >= 2);
+    }
+
+    #[test]
+    fn canonical_keys_merge_tracking_parameters_and_www_variants() {
+        let hits = vec![
+            hit(
+                "https://www.example.com/a?utm_source=newsletter",
+                "Example",
+                "short",
+                "brave",
+            ),
+            hit(
+                "https://example.com/a/",
+                "Example duplicate",
+                "a longer snippet",
+                "duckduckgo",
+            ),
+            hit("https://example.com/b", "Other", "other", "yep"),
+            hit(
+                "https://example.com/a#fragment",
+                "Example fragment",
+                "frag",
+                "brave",
+            ),
+        ];
+
+        let unique = dedupe_hits(hits);
+        assert_eq!(unique.len(), 2);
+        assert!(unique
+            .iter()
+            .any(|value| value.snippet == "a longer snippet"));
+        assert_eq!(
+            canonical_url_key("https://www.example.com/a?utm_source=x"),
+            canonical_url_key("https://example.com/a/")
+        );
+    }
+
+    #[test]
+    fn ranks_relevant_authoritative_and_diverse_sources() {
+        let hits = vec![
+            hit(
+                "https://blog.example.com/local-first",
+                "Local first from a blog",
+                "local first software ownership",
+                "mwmbl",
+            ),
+            hit(
+                "https://en.wikipedia.org/wiki/Local-first_software",
+                "Local-first software",
+                "local-first software keeps data on the device",
+                "wikipedia",
+            ),
+            hit(
+                "https://www.example.com/recipe",
+                "Chocolate cake",
+                "recipe",
+                "duckduckgo",
+            ),
+            hit(
+                "https://example.com/local-first",
+                "Local-first guide",
+                "local first software",
+                "duckduckgo",
+            ),
+            hit(
+                "https://another.example.com/local-first",
+                "Another local-first guide",
+                "local first software",
+                "brave",
+            ),
+            hit(
+                "https://example.com/another",
+                "Another page on the same domain",
+                "local first software",
+                "brave",
+            ),
+        ];
+
+        let ranked = rank_hits("local-first software", hits, 4);
+        assert!(ranked[0].url.contains("wikipedia.org"));
+        assert!(
+            ranked
+                .iter()
+                .filter(|value| domain_for(&value.url) == "example.com")
+                .count()
+                <= 2
+        );
+        assert!(ranked.iter().all(|value| !value.url.contains("recipe")));
+    }
+
+    #[test]
+    fn evaluates_evidence_coverage_and_weak_sources() {
+        let sources = vec![
+            source(1, "one.example", true),
+            source(2, "two.example", true),
+        ];
+        let chunks = vec![
+            Chunk {
+                source_id: 1,
+                text: "Local-first software keeps data on the device.".into(),
+                kind: ChunkKind::Page,
+            },
+            Chunk {
+                source_id: 2,
+                text: "Local first software supports ownership and offline work.".into(),
+                kind: ChunkKind::Page,
+            },
+        ];
+        let report = evaluate_evidence("local-first software", &sources, &chunks);
+        assert!(!report.is_weak());
+        assert_eq!(report.coverage_percent(), 100);
+        assert_eq!(report.domain_count, 2);
+
+        let weak = evaluate_evidence("local-first software", &sources[..1], &[]);
+        assert!(weak.is_weak());
+    }
+
+    #[test]
+    fn chooses_a_retry_query_that_is_not_already_planned() {
+        let plan = plan_research("What is local-first software?");
+        let retry = retry_query(&plan);
+        assert!(!retry.is_empty());
+        assert!(!plan
+            .queries
+            .iter()
+            .any(|query| query.query.eq_ignore_ascii_case(&retry)));
+    }
+
+    #[test]
+    fn rejects_unread_snippets_that_do_not_match_enough_query_terms() {
+        assert!(text_matches_query(
+            "local-first software",
+            "Local-first software - Wikipedia",
+            "local-first software stores data on the device",
+            2
+        ));
+        assert!(!text_matches_query(
+            "local-first software",
+            "Internationalization and localization",
+            "software application text",
+            2
+        ));
+    }
+
+    #[test]
+    fn detects_inline_citation_labels() {
+        assert!(has_citation_labels(
+            "Local-first software keeps data local [1]."
+        ));
+        assert!(has_citation_labels("Two claims [1, 2]."));
+        assert!(has_citation_labels("See [12]."));
+        assert!(!has_citation_labels("No labels in this answer."));
+        assert!(!has_citation_labels(
+            "Brackets like [abc] or [ ] are not labels."
+        ));
+        assert!(!has_citation_labels("An unterminated [1 is not a label."));
+    }
+
+    #[test]
+    fn citation_footer_lists_context_sources_in_order_without_duplicates() {
+        let sources = vec![
+            source(1, "one.example", true),
+            source(2, "two.example", true),
+            source(3, "three.example", true),
+        ];
+        let chunks = vec![
+            Chunk {
+                source_id: 2,
+                text: "first excerpt".into(),
+                kind: ChunkKind::Page,
+            },
+            Chunk {
+                source_id: 2,
+                text: "second excerpt".into(),
+                kind: ChunkKind::Page,
+            },
+            Chunk {
+                source_id: 1,
+                text: "third excerpt".into(),
+                kind: ChunkKind::Page,
+            },
+        ];
+        let footer = citation_footer(&sources, &chunks, &[0, 1, 2]);
+        assert_eq!(
+            footer,
+            "\n\nSources: [2] Source 2 (two.example); [1] Source 1 (one.example)."
+        );
+        assert_eq!(citation_footer(&sources, &chunks, &[]), "");
     }
 }

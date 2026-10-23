@@ -49,10 +49,10 @@ export function Composer() {
 
   const placeholder =
     connection === "checking"
-      ? "Checking Ollama on this device…"
+      ? "Checking local inference on this device…"
       : !ready
         ? connection === "offline"
-          ? "Start Ollama, then refresh the model list to chat…"
+          ? "Add a GGUF to the models folder or start Ollama, then refresh…"
           : "A local chat model is required to begin…"
         : isStreaming
           ? mode === "research"
@@ -113,7 +113,7 @@ export function Composer() {
                 searchError ??
                 (mode === "research"
                   ? "SearXNG runs locally on 127.0.0.1:8080"
-                  : "Prompts stay with the local Ollama instance")
+                  : "Prompts never leave this machine")
               }
               className="flex min-w-0 items-center gap-1.5 pr-1 text-[10px] text-slate-600"
             >

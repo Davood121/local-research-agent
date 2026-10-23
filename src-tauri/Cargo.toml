@@ -27,11 +27,25 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 # Tauri shell. No plugins are enabled in this milestone.
-tauri = { version = "2", features = [] }
+# `default-features = false` drops tauri's `common-controls-v6` default. That
+# feature makes tauri-runtime-wry import `TaskDialogIndirect` from comctl32,
+# which only exists in comctl32 v6; test binaries (which do not get the
+# tauri-build manifest that declares Common-Controls v6) then fail to load with
+# STATUS_ENTRYPOINT_NOT_FOUND. With the feature off, tauri-runtime-wry compiles
+# its supported MessageBoxW fallback and the v6-only import disappears.
+# All other tauri 2.12 defaults are kept (wry, compression, dynamic-acl, x11,
+# dbus). This app never opens native dialogs, so nothing is lost.
+tauri = { version = "2", default-features = false, features = [
+  "wry",
+  "compression",
+  "dynamic-acl",
+  "x11",
+  "dbus",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Event fan-out + timers + cancellable tasks + bounded research lookups.
-tokio = { version = "1", features = ["sync", "time", "macros", "process", "net", "rt"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "process", "net", "rt", "fs", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 # Ollama stays on plain loopback HTTP. Research page reads need HTTPS, using the
 # operating system's trust store through native-tls. Proxies are disabled for
@@ -41,6 +55,25 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "nat
 sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
 # NVIDIA telemetry. NVML is loaded at runtime, so a missing driver is not a build error.
 nvml-wrapper = "0.10"
+
+# GPU offload backend per platform. The CPU is always available at runtime; the
+# backend only decides whether the GPU half of the CPU/GPU switch can work.
+# Windows/Linux use Vulkan (cross-vendor, compiler-agnostic); macOS uses Metal,
+# which needs no extra SDK. Building on Windows/Linux requires the Vulkan SDK
+# because llama.cpp compiles its shaders with `glslc` (see docs/BUILD.md).
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "0.1.160", default-features = false, features = [
+  "common",
+  "sampler",
+  "metal",
+] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+llama-cpp-2 = { version = "0.1.160", default-features = false, features = [
+  "common",
+  "sampler",
+  "vulkan",
+] }
 
 [profile.release]
 opt-level = "s"

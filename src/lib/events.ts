@@ -81,6 +81,17 @@ export type AgentErrorEvent = {
   recoverable: boolean;
 };
 
+export type DownloadStatus = "Started" | "Progress" | "Done" | "Failed" | "Cancelled";
+
+export type ModelDownloadEvent = {
+  kind: "ModelDownload";
+  id: string;
+  status: DownloadStatus;
+  downloaded_bytes: number;
+  total_bytes: number;
+  message: string | null;
+};
+
 export type AppEvent =
   | TelemetryEvent
   | TokenEvent
@@ -88,7 +99,8 @@ export type AppEvent =
   | StepEvent
   | ToolEvent
   | SourcesEvent
-  | AgentErrorEvent;
+  | AgentErrorEvent
+  | ModelDownloadEvent;
 
 const EVENT_KINDS = new Set<AppEvent["kind"]>([
   "Telemetry",
@@ -98,6 +110,7 @@ const EVENT_KINDS = new Set<AppEvent["kind"]>([
   "Tool",
   "Sources",
   "Error",
+  "ModelDownload",
 ]);
 
 /**

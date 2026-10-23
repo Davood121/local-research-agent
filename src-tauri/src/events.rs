@@ -57,6 +57,13 @@ pub enum AppEvent {
         message: String,
         recoverable: bool,
     },
+    ModelDownload {
+        id: String,
+        status: DownloadStatus,
+        downloaded_bytes: u64,
+        total_bytes: u64,
+        message: Option<String>,
+    },
 }
 
 // Part of the wire contract; `Failed` is produced once agent nodes exist.
@@ -66,6 +73,17 @@ pub enum StepStatus {
     Started,
     Done,
     Failed,
+}
+
+/// Lifecycle of a model download. `message` on the event carries the reason for
+/// `Failed`; other states leave it `None`.
+#[derive(Debug, Clone, Serialize)]
+pub enum DownloadStatus {
+    Started,
+    Progress,
+    Done,
+    Failed,
+    Cancelled,
 }
 
 // Each variant is only constructed on its own platform, but the wire schema is
@@ -130,6 +148,26 @@ mod tests {
 
         let gpu = serde_json::to_value(GpuStat::Unavailable).unwrap();
         assert_eq!(gpu, json!("Unavailable"));
+    }
+
+    #[test]
+    fn model_download_events_serialize_progress_and_reasons() {
+        let event = AppEvent::ModelDownload {
+            id: "qwen2.5-1.5b-instruct".into(),
+            status: DownloadStatus::Progress,
+            downloaded_bytes: 512,
+            total_bytes: 1024,
+            message: None,
+        };
+
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["kind"], json!("ModelDownload"));
+        assert_eq!(value["status"], json!("Progress"));
+        assert_eq!(value["downloaded_bytes"], json!(512));
+        assert!(value["message"].is_null());
+
+        let failed = serde_json::to_value(DownloadStatus::Failed).unwrap();
+        assert_eq!(failed, json!("Failed"));
     }
 
     #[test]

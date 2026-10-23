@@ -81,10 +81,12 @@ export function StatusBar() {
           />
           <span className={connection === "offline" ? "text-slate-500" : "text-slate-400"}>
             {connection === "connected"
-              ? `Ollama${version ? ` ${version}` : ""}`
+              ? version
+                ? `Ollama ${version}`
+                : "Built-in engine"
               : connection === "checking"
-                ? "Checking Ollama"
-                : "Ollama offline"}
+                ? "Checking local models"
+                : "No local models"}
           </span>
         </span>
         <Separator />

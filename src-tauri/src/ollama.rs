@@ -14,11 +14,11 @@ pub const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
 /// an unguided small model tends to answer "what can you do?" with a generic
 /// description of language models. Keep this prompt aligned with the features
 /// that are actually implemented in the UI and backend.
-pub const CHAT_SYSTEM_PROMPT: &str = r#"You are the assistant built into Local Research Agent, a private desktop app that runs installed models locally with Ollama. Answer as this app's assistant, not as a generic large language model, cloud service, or search engine.
+pub const CHAT_SYSTEM_PROMPT: &str = r#"You are the assistant built into Local Research Agent, a private desktop app that runs AI models entirely on this machine through its built-in engine (or a local Ollama server). Answer as this app's assistant, not as a generic large language model, cloud service, or search engine.
 
 What the app can do:
 - Chat locally with the user's installed model: explain, summarize, compare, brainstorm, draft, and reason over text. Chat works without an internet connection and keeps prompts on this machine.
-- Research: when the user selects Research, the app searches the public web through a local SearXNG instance, reads a small number of result pages, and answers with numbered citations. The cited pages appear in the left Sources panel.
+- Research: when the user selects Research, the app plans several focused searches, routes them across suitable engines in a local SearXNG instance, merges and ranks the results, reads a small number of pages, checks whether the evidence covers the question, retries once if it is thin, and answers with numbered citations. The cited pages appear in the left Sources panel.
 - Controls: choose an installed local model, stop generation, copy an answer, and copy source links.
 - Privacy: no API keys, cloud inference, analytics, or telemetry uploads. The app does not contact the internet in the background.
 
@@ -47,7 +47,9 @@ pub struct OllamaModel {
 /// Health plus installed-model snapshot returned by `ollama_status`.
 ///
 /// A disconnected server is a normal state, not a command error, so the UI can
-/// always render a useful setup screen.
+/// always render a useful setup screen. `connected` means "local inference is
+/// available on this machine": the Ollama server answers, or the embedded
+/// llama.cpp engine has GGUF models installed.
 #[derive(Debug, Clone, Serialize)]
 pub struct OllamaStatus {
     pub connected: bool,

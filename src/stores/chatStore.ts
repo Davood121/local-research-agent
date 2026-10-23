@@ -335,7 +335,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   onError: (event) => {
-    if (!get().activeRunId || (event.scope !== "ollama" && event.scope !== "research")) return;
+    if (
+      !get().activeRunId ||
+      (event.scope !== "ollama" && event.scope !== "chat" && event.scope !== "research")
+    )
+      return;
     if (event.message === "Generation stopped.") {
       set({ cancelRequested: true });
       return;

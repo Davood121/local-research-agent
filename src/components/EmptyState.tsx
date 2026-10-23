@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useChatStore } from "../stores/chatStore";
+import { useModelStore } from "../stores/modelStore";
 import { useResearchStore } from "../stores/researchStore";
 import { BrandMark } from "./BrandMark";
-import { CheckIcon, CopyIcon, RefreshIcon, ServerIcon, SparkIcon } from "./Icons";
+import { CheckIcon, CopyIcon, DownloadIcon, RefreshIcon, ServerIcon, SparkIcon } from "./Icons";
 
 const SUGGESTIONS = [
   "Explain a difficult idea in simple terms",
@@ -59,9 +60,9 @@ function CheckingState() {
       <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-sky-400/15 bg-sky-400/[0.05]">
         <span className="h-6 w-6 animate-spin rounded-full border-2 border-sky-400/20 border-t-sky-300" />
       </div>
-      <h2 className="text-lg font-semibold text-slate-100">Looking for Ollama</h2>
+      <h2 className="text-lg font-semibold text-slate-100">Looking for local models</h2>
       <p className="mt-2 max-w-sm text-sm leading-relaxed text-slate-500">
-        Checking the local inference server at 127.0.0.1:11434. Nothing leaves this machine.
+        Checking the built-in model folder and any local Ollama server. Nothing leaves this machine.
       </p>
     </div>
   );
@@ -71,6 +72,7 @@ function OfflineState() {
   const statusError = useChatStore((state) => state.statusError);
   const checking = useChatStore((state) => state.checking);
   const refresh = useChatStore((state) => state.refresh);
+  const openDownloads = useModelStore((state) => state.openPanel);
 
   return (
     <div className="w-full max-w-xl">
@@ -81,9 +83,18 @@ function OfflineState() {
         Connect your local model
       </h2>
       <p className="mt-2 max-w-lg text-sm leading-relaxed text-slate-400">
-        Ollama is not answering on this device. Start it once and this screen will update
-        automatically.
+        No local inference is available yet: install a GGUF model or start Ollama once, and this
+        screen will update automatically.
       </p>
+
+      <button
+        type="button"
+        onClick={openDownloads}
+        className="mt-5 inline-flex items-center gap-2 rounded-lg border border-sky-400/25 bg-sky-400/[0.09] px-3.5 py-2 text-xs font-semibold text-sky-200 transition hover:border-sky-400/40 hover:bg-sky-400/[0.15]"
+      >
+        <DownloadIcon className="h-3.5 w-3.5" />
+        Download a model
+      </button>
 
       <div className="mt-6 grid gap-2.5">
         <div className="flex gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] p-3.5">
@@ -91,9 +102,13 @@ function OfflineState() {
             1
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-slate-300">Start the local server</p>
+            <p className="text-xs font-medium text-slate-300">
+              Drop a GGUF file into the models folder (no server needed)
+            </p>
             <div className="mt-2">
-              <CommandLine>ollama serve</CommandLine>
+              <CommandLine>
+                C:\Users\…\AppData\Roaming\dev.localresearch.agent\models\model-q4_k_m.gguf
+              </CommandLine>
             </div>
           </div>
         </div>
@@ -103,9 +118,19 @@ function OfflineState() {
             2
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-slate-300">
-              Make sure a chat model is installed
-            </p>
+            <p className="text-xs font-medium text-slate-300">Or start the Ollama server</p>
+            <div className="mt-2">
+              <CommandLine>ollama serve</CommandLine>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] p-3.5">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-[10px] font-semibold text-slate-400">
+            3
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-slate-300">Or pull a chat model with Ollama</p>
             <div className="mt-2">
               <CommandLine>ollama pull qwen3:4b</CommandLine>
             </div>
@@ -233,7 +258,7 @@ function ReadyState() {
           {info.context_length ? (
             <span>{Math.round(info.context_length / 1024)}K context</span>
           ) : null}
-          <span>127.0.0.1:11434</span>
+          <span>{info.family === "embedded gguf" ? "built-in engine" : "127.0.0.1:11434"}</span>
           {isResearch ? <span>SearXNG 127.0.0.1:8080</span> : null}
         </div>
       ) : null}

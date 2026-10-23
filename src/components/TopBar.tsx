@@ -1,8 +1,10 @@
 import { useEffect } from "react";
 import { BrandMark } from "./BrandMark";
-import { ChevronDownIcon, RefreshIcon, ShieldIcon } from "./Icons";
+import { ChevronDownIcon, DownloadIcon, RefreshIcon, ShieldIcon } from "./Icons";
 import { DebugStreamButton } from "./DebugStreamButton";
 import { useChatStore } from "../stores/chatStore";
+import { useEngineStore } from "../stores/engineStore";
+import { useModelStore } from "../stores/modelStore";
 import { useResearchStore } from "../stores/researchStore";
 
 function ModelPicker() {
@@ -13,6 +15,7 @@ function ModelPicker() {
   const isStreaming = useChatStore((state) => state.isStreaming);
   const selectModel = useChatStore((state) => state.selectModel);
   const refresh = useChatStore((state) => state.refresh);
+  const openDownloads = useModelStore((state) => state.openPanel);
 
   const value = models.some((model) => model.name === selectedModel) ? (selectedModel ?? "") : "";
   const disabled = connection !== "connected" || models.length === 0 || isStreaming;
@@ -51,6 +54,16 @@ function ModelPicker() {
       >
         <RefreshIcon className={`h-3.5 w-3.5 ${checking ? "animate-spin" : ""}`} />
       </button>
+
+      <button
+        type="button"
+        onClick={openDownloads}
+        title="Download a local model"
+        aria-label="Download a local model"
+        className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-slate-400 transition hover:border-sky-400/30 hover:bg-sky-400/[0.07] hover:text-sky-200"
+      >
+        <DownloadIcon className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
@@ -64,7 +77,7 @@ function ConnectionPill() {
     return (
       <span className="hidden items-center gap-2 rounded-full border border-sky-400/20 bg-sky-400/[0.06] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-300 lg:flex">
         <span className="h-2.5 w-2.5 animate-spin rounded-full border border-sky-300/30 border-t-sky-300" />
-        Checking Ollama
+        Checking local models
       </span>
     );
   }
@@ -73,14 +86,14 @@ function ConnectionPill() {
     return (
       <span className="hidden items-center gap-2 rounded-full border border-rose-400/20 bg-rose-400/[0.06] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-300 lg:flex">
         <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-        Ollama offline
+        No local models
       </span>
     );
   }
 
   return (
     <span
-      title={version ? `Ollama ${version}` : "Ollama is running locally"}
+      title={version ? `Ollama ${version}` : "Running the built-in engine"}
       className="hidden items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/[0.06] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-300 lg:flex"
     >
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
@@ -92,16 +105,19 @@ function ConnectionPill() {
 export function TopBar() {
   const refresh = useChatStore((state) => state.refresh);
   const refreshResearch = useResearchStore((state) => state.refresh);
+  const refreshEngine = useEngineStore((state) => state.refresh);
 
   useEffect(() => {
     void refresh();
     void refreshResearch();
+    void refreshEngine();
     const timer = window.setInterval(() => {
       void refresh();
       void refreshResearch();
+      void refreshEngine();
     }, 30_000);
     return () => window.clearInterval(timer);
-  }, [refresh, refreshResearch]);
+  }, [refresh, refreshResearch, refreshEngine]);
 
   return (
     <header className="relative z-20 flex h-16 shrink-0 items-center justify-between gap-4 border-b border-white/[0.06] bg-[#060b15]/90 px-5 backdrop-blur-xl">

@@ -70,12 +70,60 @@ sudo apt-get install -y \
   libayatana-appindicator3-dev \
   librsvg2-dev \
   patchelf \
+  glslc \
+  libvulkan-dev \
   pkg-config \
   libssl-dev \
   build-essential
 ```
 
 Install `rustup` and Node 22. AppImage/deb builds are unsigned.
+
+## GPU backend
+
+The embedded engine is compiled with a GPU backend so the app can switch between
+CPU and GPU inference at runtime. The CPU is always available in the same
+binary; the GPU half of the switch is offered only when llama.cpp enumerates a
+**discrete** device (integrated GPUs are ignored).
+
+| OS      | Backend | Build prerequisite                                                                                   |
+| ------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| Windows | Vulkan  | [Vulkan SDK](https://vulkan.lunarg.com/sdk/home), e.g. `winget install KhronosGroup.VulkanSDK`        |
+| Linux   | Vulkan  | Vulkan SDK/loader plus `glslc` (e.g. `vulkan-sdk` packages or the LunarG SDK)                        |
+| macOS   | Metal   | None beyond the Xcode Command Line Tools                                                             |
+
+llama.cpp compiles its Vulkan shaders during the build, so `glslc` and the Vulkan
+headers must be discoverable. On Windows the SDK installer sets `VULKAN_SDK`; a
+shell started before the install must be restarted (or the variable exported)
+before `cargo`/`tauri` runs:
+
+```powershell
+$env:VULKAN_SDK = "C:\VulkanSDK\1.4.363.0"
+$env:PATH = "$env:VULKAN_SDK\Bin;$env:PATH"
+```
+
+A missing SDK fails the build in `llama-cpp-sys-2` with
+`Please install Vulkan SDK and ensure that VULKAN_SDK env variable is set`.
+The GPU choice is stored in `<app data>/settings.json`; it is ignored at startup
+if no discrete device is present, so a driver change cannot leave every chat
+failing.
+
+## Installers and releases
+
+The CI workflow builds Windows **MSI and NSIS EXE** installers, a macOS **DMG**,
+and Linux **AppImage and DEB** packages. Each workflow run uploads the generated
+installers as per-platform artifacts; download them from the run's **Summary**
+page. macOS builds are unsigned and not notarized, so macOS may require the user
+to approve the app before opening it. Windows installers are unsigned and may
+show a SmartScreen warning. Windows installers skip WebView2 setup; Windows
+10/11 systems normally already include the WebView2 runtime.
+
+To publish a GitHub Release, update the app version consistently in
+`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, and
+`src-tauri/tauri.conf.json`, then push a matching version tag (for example,
+`v0.1.0`). CI builds all three platforms and attaches their installers to the
+release. A regular workflow run or manual dispatch builds and uploads artifacts
+without publishing a release.
 
 ## Commands
 

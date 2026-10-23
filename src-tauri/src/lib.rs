@@ -20,8 +20,10 @@
 #[cfg(not(test))]
 mod commands;
 mod config;
+mod engine;
 mod error;
 mod events;
+mod model_catalog;
 mod ollama;
 mod research;
 #[cfg(not(test))]
@@ -40,6 +42,7 @@ pub fn run() {
         .manage(AppState::new())
         .setup(|app| {
             let state = app.state::<AppState>();
+            commands::engine::restore_device(app.handle());
             telemetry::spawn(app.handle().clone(), state.tx.clone(), state.cancel.clone());
             Ok(())
         });
@@ -52,6 +55,12 @@ pub fn run() {
         commands::chat::ollama_status,
         commands::chat::start_chat,
         commands::chat::cancel_chat,
+        commands::engine::engine_status,
+        commands::engine::engine_unload,
+        commands::engine::set_inference_device,
+        commands::models::list_model_catalog,
+        commands::models::download_model,
+        commands::models::cancel_model_download,
         commands::research::research_status,
         commands::research::start_research,
         commands::debug_stream::debug_start_stream
@@ -63,6 +72,9 @@ pub fn run() {
         commands::chat::ollama_status,
         commands::chat::start_chat,
         commands::chat::cancel_chat,
+        commands::engine::engine_status,
+        commands::engine::engine_unload,
+        commands::engine::set_inference_device,
         commands::research::research_status,
         commands::research::start_research
     ]);

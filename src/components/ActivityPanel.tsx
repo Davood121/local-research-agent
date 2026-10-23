@@ -1,5 +1,6 @@
 import { useActivityStore } from "../stores/activityStore";
 import { useChatStore } from "../stores/chatStore";
+import { useEngineStore } from "../stores/engineStore";
 import { useMetricsStore } from "../stores/metricsStore";
 import { ClockIcon, PulseIcon, ServerIcon, ShieldIcon } from "./Icons";
 
@@ -11,6 +12,10 @@ function formatDuration(ms: number | null): string {
 
 function formatNumber(value: number): string {
   return value.toLocaleString("en-US");
+}
+
+function formatGigabytes(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -31,9 +36,19 @@ export function ActivityPanel() {
   const metrics = useMetricsStore((state) => state.latest);
   const isStreaming = useChatStore((state) => state.isStreaming);
   const selectedModel = useChatStore((state) => state.selectedModel);
+  const models = useChatStore((state) => state.models);
   const connection = useChatStore((state) => state.connection);
+  const embeddedModel =
+    selectedModel !== null &&
+    models.some((model) => model.name === selectedModel && model.family === "embedded gguf");
   const lastDurationMs = useChatStore((state) => state.lastDurationMs);
   const messages = useChatStore((state) => state.messages);
+  const device = useEngineStore((state) => state.device);
+  const gpu = useEngineStore((state) => state.gpu);
+  const changingDevice = useEngineStore((state) => state.changing);
+  const deviceError = useEngineStore((state) => state.error);
+  const setDevice = useEngineStore((state) => state.setDevice);
+  const clearDeviceError = useEngineStore((state) => state.clearError);
   const lastRunHadOutput = tokenCount > 0;
   const visibleErrors = errors.filter((error) => error.message !== "Generation stopped.");
   const lastEntry = messages[messages.length - 1];
@@ -57,12 +72,18 @@ export function ActivityPanel() {
   const stepLabel = (node: string): string => {
     if (node === "chat") return "Local inference";
     if (node === "research") return "Local research";
+    if (node === "plan") return "Query planning";
+    if (node === "search") return "Engine search";
+    if (node === "read") return "Page reading";
+    if (node === "verify") return "Evidence check";
     return node;
   };
 
   const toolLabel = (name: string): string => {
+    if (name === "plan_research") return "Research plan";
     if (name === "web_search") return "Web search";
     if (name === "read_pages") return "Read pages";
+    if (name === "verify_evidence") return "Evidence check";
     return name;
   };
 
@@ -127,8 +148,74 @@ export function ActivityPanel() {
           </div>
           <div className="mt-3 flex items-center gap-1.5 text-[9.5px] text-slate-600">
             <ServerIcon className="h-3 w-3" />
-            <span className="font-mono">127.0.0.1:11434</span>
+            <span className={embeddedModel ? undefined : "font-mono"}>
+              {embeddedModel ? "Built-in engine · no server" : "127.0.0.1:11434"}
+            </span>
           </div>
+          {embeddedModel ? (
+            <div className="mt-3 border-t border-white/[0.05] pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[9px] font-medium uppercase tracking-[0.16em] text-slate-600">
+                  Compute
+                </span>
+                <div
+                  role="group"
+                  aria-label="Inference device"
+                  className="flex rounded-md border border-white/[0.08] bg-black/20 p-0.5"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearDeviceError();
+                      void setDevice("cpu");
+                    }}
+                    disabled={isStreaming || changingDevice}
+                    aria-pressed={device === "cpu"}
+                    className={`rounded px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.1em] transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      device === "cpu"
+                        ? "bg-sky-400/15 text-sky-200"
+                        : "text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    CPU
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearDeviceError();
+                      void setDevice("gpu");
+                    }}
+                    disabled={isStreaming || changingDevice || gpu === null}
+                    aria-pressed={device === "gpu"}
+                    title={
+                      gpu
+                        ? `${gpu.name} · ${gpu.backend} · ${formatGigabytes(gpu.memory_free_bytes)} free`
+                        : "No discrete Vulkan GPU detected"
+                    }
+                    className={`rounded px-2 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.1em] transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      device === "gpu"
+                        ? "bg-emerald-400/15 text-emerald-200"
+                        : "text-slate-500 hover:text-slate-300"
+                    }`}
+                  >
+                    GPU
+                  </button>
+                </div>
+              </div>
+              <p className="mt-1.5 truncate text-[9.5px] text-slate-600">
+                {device === "gpu"
+                  ? gpu
+                    ? `${gpu.name} · ${gpu.backend}`
+                    : "GPU unavailable"
+                  : gpu
+                    ? "CPU · GPU available"
+                    : "CPU only"}
+              </p>
+              {deviceError && (
+                <p className="mt-1 text-[10px] leading-snug text-rose-300">{deviceError}</p>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-2">

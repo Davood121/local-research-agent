@@ -31,6 +31,9 @@ pub enum AppEvent {
            summary: Option<String> },
     Sources { run_id: String, sources: Vec<ResearchSource> },
     Error { scope: String, message: String, recoverable: bool },
+    ModelDownload { id: String, status: DownloadStatus,
+                    downloaded_bytes: u64, total_bytes: u64,
+                    message: Option<String> },
 }
 
 pub struct ResearchSource {
@@ -44,6 +47,8 @@ pub struct ResearchSource {
 }
 
 pub enum StepStatus { Started, Done, Failed }
+
+pub enum DownloadStatus { Started, Progress, Done, Failed, Cancelled }
 
 pub enum GpuStat {
     Nvidia { vram_used_gb: f32, vram_total_gb: f32, util_pct: u8 },
@@ -123,6 +128,34 @@ variant `Unavailable` serialises as the plain string `"Unavailable"`.
 }
 ```
 
+```json
+{
+  "kind": "ModelDownload",
+  "id": "qwen2.5-1.5b-instruct",
+  "status": "Progress",
+  "downloaded_bytes": 524288000,
+  "total_bytes": 1117320736,
+  "message": null
+}
+```
+
+## Model download lifecycle
+
+Downloads are started by `download_model { id }`, where `id` is a curated
+catalog id and never a URL. Exactly one download runs at a time; a second start
+is rejected. Events use the catalog id, not a run id:
+
+1. `ModelDownload { status: "Started", downloaded_bytes: 0 }` after the response
+   headers are validated.
+2. `ModelDownload { status: "Progress", … }` as chunks are written, at most once
+   per percent or per 250 ms.
+3. One terminal event: `Done` (with the final size), `Cancelled`, or `Failed`
+   (with `message`). `cancel_model_download` is idempotent.
+
+Bytes are written to a hidden `.<filename>.part` file and renamed only after the
+response length matches. A failure or cancellation removes the partial file, so
+the model picker never sees an incomplete GGUF.
+
 ## Chat run lifecycle
 
 The UI generates the `run_id` before calling `start_chat`, so it can accept
@@ -134,9 +167,12 @@ A successful local run emits:
 1. `Step { node: "chat", status: Started, duration_ms: null }`
 2. zero or more `Token` events. `index` starts at 0 and counts stream chunks, not
    tokenizer tokens.
-3. one `Metrics` event calculated from Ollama's final `done` object. `ttft_ms`
-   includes model load/queue time, `tok_per_sec` uses `eval_duration`, and
-   `prompt_tokens`/`gen_tokens` come from `prompt_eval_count`/`eval_count`.
+3. one `Metrics` event. Over Ollama it is calculated from the final `done`
+   object: `ttft_ms` includes model load/queue time, `tok_per_sec` uses
+   `eval_duration`, and `prompt_tokens`/`gen_tokens` come from
+   `prompt_eval_count`/`eval_count`. Over the embedded engine the same fields are
+   measured in-process (`ttft_ms` includes model load, `tok_per_sec` covers the
+   decode loop, `ctx_used_pct` uses the model's training context).
    `ctx_used_pct` uses the selected model's advertised context length when
    available, otherwise it is `0`.
 4. `Step { node: "chat", status: Done, duration_ms: <run duration> }`
@@ -157,26 +193,36 @@ the conversation and the bounded raw-stream preview.
 
 A successful research run emits:
 
-1. `Step { node: "research", status: Started }`
-2. `Tool { name: "web_search", status: Started }`, then Done or Failed with a
-   summary.
-3. `Tool { name: "read_pages", status: Started }`, then Done or Failed. A Done
-   summary reports how many of the selected pages were read; the rest fall back
-   to search snippets.
-4. one `Sources` event with the numbered source metadata used by the UI.
-5. `Step { node: "research", status: Done }`.
-6. `Step { node: "chat", status: Started }`, zero or more `Token` events, one
-   final `Metrics`, and `Step { node: "chat", status: Done }`.
+1. `Step { node: "research", status: Started }`.
+2. `Step { node: "plan", status: Started }`, a `Tool { name: "plan_research" }`
+   with the local intent and planned sub-queries, then plan Done.
+3. `Step { node: "search", status: Started }`, a `Tool { name: "web_search" }`
+   with the planned queries and engine routes, then Done or Failed.
+4. `Step { node: "read", status: Started }`, a `Tool { name: "read_pages" }`,
+   then Done or Failed. A Done summary reports how many selected pages were
+   read; the rest fall back to search snippets.
+5. `Step { node: "verify", status: Started }`, then a
+   `Tool { name: "verify_evidence" }` with coverage, domain, and retry metadata.
+   If evidence is thin, the run may emit one more `web_search`/`read_pages`
+   pair before verify completes.
+6. one `Sources` event with the numbered source metadata used by the UI.
+7. `Step { node: "research", status: Done }`.
+8. `Step { node: "chat", status: Started }`, zero or more `Token` events, one
+   final `Metrics`, and `Step { node: "chat", status: Done }`. If the streamed
+   answer contains no `[n]` label, the runner emits one extra `Token` with a
+   `Sources: [n] Title (domain)` footer before that final Done.
 
 The chat store deliberately ignores a successful `research` Done event so it
 does not end the run before chat starts. A failed research step finalizes the
-assistant message. Search, page-read, and generation errors use
-`Error { scope: "research" }`; Ollama generation failures use
-`Error { scope: "ollama" }`. Both are routed to the chat store.
+assistant message. Planning, search, page-read, and generation errors in a
+research run all use `Error { scope: "research" }` (regardless of whether the
+embedded engine or Ollama generated the answer); plain chat generation failures
+are emitted with `scope: "chat"` on the embedded engine path and `scope:
+"ollama"` on the Ollama path. All are routed to the chat store.
 
 Cancellation emits a failed active tool/step followed by
-`Error { scope: "research" | "ollama", message: "Generation stopped." }` as
-appropriate. The UI keeps any partial answer and marks the entry stopped.
+`Error { scope: "research" | "ollama" | "chat", message: "Generation stopped." }`
+as appropriate. The UI keeps any partial answer and marks the entry stopped.
 
 Research is a separate command from chat. The webview never supplies a page URL;
 only Rust selects and validates URLs from search results.

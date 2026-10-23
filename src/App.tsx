@@ -1,5 +1,6 @@
 import { ActivityPanel } from "./components/ActivityPanel";
 import { ChatPanel } from "./components/ChatPanel";
+import { ModelDownloads } from "./components/ModelDownloads";
 import { SourcesPanel } from "./components/SourcesPanel";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
@@ -19,6 +20,7 @@ export default function App() {
       </div>
 
       <StatusBar />
+      <ModelDownloads />
     </div>
   );
 }

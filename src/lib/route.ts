@@ -2,6 +2,7 @@ import type { AppEvent } from "./events";
 import { useActivityStore } from "../stores/activityStore";
 import { useChatStore } from "../stores/chatStore";
 import { useMetricsStore } from "../stores/metricsStore";
+import { useModelStore } from "../stores/modelStore";
 import { useSystemStore } from "../stores/systemStore";
 
 /** Single place that maps the wire union onto stores. */
@@ -27,9 +28,12 @@ export function routeAppEvent(event: AppEvent): void {
     case "Sources":
       useChatStore.getState().onSources(event);
       break;
+    case "ModelDownload":
+      useModelStore.getState().onEvent(event);
+      break;
     case "Error":
       useActivityStore.getState().onError(event);
-      if (event.scope === "ollama" || event.scope === "research") {
+      if (event.scope === "ollama" || event.scope === "chat" || event.scope === "research") {
         useChatStore.getState().onError(event);
       } else {
         useSystemStore.getState().setBridgeError(event.message);
