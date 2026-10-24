@@ -4,6 +4,7 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   ExportIcon,
+  GraphIcon,
   HistoryIcon,
   RefreshIcon,
   ShieldIcon,
@@ -118,6 +119,9 @@ export function TopBar() {
   const openDrawer = useSessionStore((state) => state.openDrawer);
   const openExport = useSessionStore((state) => state.openExport);
   const sessionCount = useSessionStore((state) => state.sessions.length);
+  const hasSources = messages.some(
+    (entry) => entry.role === "assistant" && (entry.sources?.length ?? 0) > 0,
+  );
 
   const hasMessages = messages.length > 0;
 
@@ -165,6 +169,18 @@ export function TopBar() {
           <span className="font-mono text-[10px] tracking-tight text-slate-500">Ctrl K</span>
         </button>
 
+        {hasSources && (
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event("lra:source-compare"))}
+            title="Compare the pages this research run read"
+            className="press flex h-9 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-xs font-medium text-slate-300 hover:border-white/20 hover:bg-white/[0.07] hover:text-slate-100"
+          >
+            <GraphIcon className="h-3.5 w-3.5 text-emerald-400/80" />
+            <span className="hidden sm:inline">Compare</span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={openDrawer}
@@ -184,7 +200,7 @@ export function TopBar() {
           <button
             type="button"
             onClick={() => openExport()}
-            title="Export research dossier (Markdown / HTML / JSON)"
+            title="Export research dossier (Markdown / HTML / PDF / JSON)"
             className="flex h-9 items-center gap-1.5 rounded-lg border border-sky-400/25 bg-sky-400/[0.08] px-2.5 text-xs font-medium text-sky-200 transition hover:border-sky-400/40 hover:bg-sky-400/[0.14]"
           >
             <ExportIcon className="h-3.5 w-3.5" />

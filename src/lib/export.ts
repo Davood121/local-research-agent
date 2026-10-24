@@ -1,4 +1,5 @@
 import type { ChatEntry } from "../stores/chatStore";
+import { compareSources, compareToMarkdown } from "./compare";
 import type { ResearchSource } from "./events";
 
 export type ExportFormat = "markdown" | "html" | "pdf" | "json";
@@ -66,6 +67,15 @@ export function generateMarkdownReport(data: ResearchReportData): string {
     lines.push(``);
   }
 
+  if (data.sources.length > 1) {
+    lines.push(`## Cross-source overlap`, ``);
+    lines.push(
+      `Overlap counts significant terms shared between titles and snippets. It is a reading aid, not a verdict on which page is correct.`,
+      ``,
+    );
+    lines.push(compareToMarkdown(compareSources(data.sources)), ``);
+  }
+
   lines.push(`---`, `*Generated offline on local hardware with zero cloud telemetry.*`);
 
   return lines.join("\n");
@@ -93,6 +103,18 @@ export function generateHtmlReport(data: ResearchReportData): string {
         <p style="margin: 4px 0; font-size: 13px; color: #475569;">${escapeHtml(src.snippet)}</p>
         <a href="${escapeHtml(src.url)}" target="_blank" rel="noopener noreferrer" style="font-size: 12px; color: #0284c7; text-decoration: underline; word-break: break-all;">${escapeHtml(src.url)}</a>
       </li>`,
+    )
+    .join("");
+
+  const comparisonRows = compareSources(data.sources)
+    .map(
+      (row) => `
+      <tr>
+        <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-weight: 600;">[${row.source.id}] ${escapeHtml(row.source.title)}</td>
+        <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">${escapeHtml(row.source.domain || "web")}</td>
+        <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0; text-align: right;">${row.bestShared}</td>
+        <td style="padding: 6px 8px; border-bottom: 1px solid #e2e8f0;">${row.peers.length ? row.peers.map((id) => `[${id}]`).join(" ") : "unique"}</td>
+      </tr>`,
     )
     .join("");
 
@@ -156,6 +178,27 @@ export function generateHtmlReport(data: ResearchReportData): string {
     <ol class="sources">
       ${sourcesList}
     </ol>
+  </section>`
+      : ""
+  }
+
+  ${
+    data.sources.length > 1
+      ? `
+  <section style="margin-top: 32px;">
+    <h2>Cross-source overlap</h2>
+    <p style="font-size: 12px; color: #64748b;">Shared significant terms between titles and snippets. A reading aid, not a verdict on which page is correct.</p>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <thead>
+        <tr style="text-align: left; color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">
+          <th style="padding: 6px 8px; border-bottom: 1px solid #cbd5e1;">Source</th>
+          <th style="padding: 6px 8px; border-bottom: 1px solid #cbd5e1;">Domain</th>
+          <th style="padding: 6px 8px; border-bottom: 1px solid #cbd5e1; text-align: right;">Max shared</th>
+          <th style="padding: 6px 8px; border-bottom: 1px solid #cbd5e1;">Related</th>
+        </tr>
+      </thead>
+      <tbody>${comparisonRows}</tbody>
+    </table>
   </section>`
       : ""
   }

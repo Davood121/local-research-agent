@@ -4,6 +4,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { ExportModal } from "./components/ExportModal";
 import { ModelDownloads } from "./components/ModelDownloads";
 import { SessionsDrawer } from "./components/SessionsDrawer";
+import { SourceCompareTable } from "./components/SourceCompareTable";
 import { SourcesPanel } from "./components/SourcesPanel";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
@@ -30,6 +31,7 @@ export default function App() {
       <ModelDownloads />
       <SessionsDrawer />
       <CommandPalette />
+      <SourceCompareTable />
       <ExportModal isOpen={exportModalOpen} onClose={closeExport} targetEntryId={exportEntryId} />
     </div>
   );

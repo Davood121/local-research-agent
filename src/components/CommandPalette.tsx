@@ -154,10 +154,21 @@ export function CommandPalette() {
         id: "export",
         group: "Actions",
         label: "Export this session",
-        hint: "Markdown, HTML or JSON",
-        keywords: "save download share",
+        hint: "Markdown, HTML, PDF or JSON",
+        keywords: "save download share print",
         run: () => {
           openExport();
+          close();
+        },
+      },
+      {
+        id: "compare",
+        group: "Actions",
+        label: "Compare sources",
+        hint: "Shared terms across pages",
+        keywords: "overlap table corroborate agree matrix",
+        run: () => {
+          window.dispatchEvent(new Event("lra:source-compare"));
           close();
         },
       },
