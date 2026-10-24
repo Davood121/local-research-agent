@@ -11,7 +11,7 @@ No cloud. No API keys. No telemetry. Just pure local intelligence.
 [![CI](https://img.shields.io/github/actions/workflow/status/Davood121/local-research-agent/ci.yml?style=for-the-badge&logo=githubactions&label=CI&logoColor=white)](https://github.com/Davood121/local-research-agent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-blue?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=for-the-badge&logo=windows)](https://github.com/Davood121/local-research-agent/releases/latest)
-[![Version](https://img.shields.io/badge/version-0.2.1-orange?style=for-the-badge)](https://github.com/Davood121/local-research-agent/releases/tag/v0.2.1)
+[![Version](https://img.shields.io/badge/version-0.2.2-orange?style=for-the-badge)](https://github.com/Davood121/local-research-agent/releases/tag/v0.2.2)
 
 <br/>
 

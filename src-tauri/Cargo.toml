@@ -1,6 +1,6 @@
 [package]
 name = "local-research-agent"
-version = "0.2.1"
+version = "0.2.2"
 description = "Fully local, offline AI research agent"
 authors = ["Local Research Agent contributors"]
 edition = "2021"
