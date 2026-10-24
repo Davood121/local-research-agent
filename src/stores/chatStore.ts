@@ -20,6 +20,7 @@ import { useActivityStore } from "./activityStore";
 import { useMetricsStore } from "./metricsStore";
 import { useResearchStore } from "./researchStore";
 import { useSessionStore } from "./sessionStore";
+import { useVaultStore } from "./vaultStore";
 
 const MODEL_STORAGE_KEY = "lra.selectedModel";
 const MAX_HISTORY_MESSAGES = 24;
@@ -211,10 +212,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void (async () => {
       try {
         if (mode === "research") {
+          const vaultContext = useVaultStore.getState().getVaultContext();
+          const enrichedQuery = vaultContext
+            ? `${vaultContext}\n\n---\nResearch query: ${prompt}`
+            : prompt;
           await startResearch({
             run_id: runId,
             model,
-            query: prompt,
+            query: enrichedQuery,
             history,
           });
         } else {
