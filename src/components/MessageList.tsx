@@ -1,10 +1,12 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { ResearchSource } from "../lib/events";
 import type { ChatEntry } from "../stores/chatStore";
 import { useChatStore } from "../stores/chatStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { BrandMark } from "./BrandMark";
+import { CitationChip } from "./CitationChip";
 import { CheckIcon, CopyIcon, ExportIcon } from "./Icons";
 
 const timeFormatter = new Intl.DateTimeFormat("en-US", {
@@ -14,90 +16,120 @@ const timeFormatter = new Intl.DateTimeFormat("en-US", {
 
 // Links and images are deliberately rendered without an href/src. The model is
 // untrusted text: opening a URL or fetching a remote image must stay a user
-// action, never a side effect of rendering an answer.
-const MARKDOWN_COMPONENTS: Components = {
-  h1: ({ children }) => (
-    <h1 className="mb-2 mt-4 text-[15px] font-semibold text-slate-100 first:mt-0">{children}</h1>
-  ),
-  h2: ({ children }) => (
-    <h2 className="mb-2 mt-4 text-[14px] font-semibold text-slate-100 first:mt-0">{children}</h2>
-  ),
-  h3: ({ children }) => (
-    <h3 className="mb-1.5 mt-3 text-[13.5px] font-semibold text-slate-100 first:mt-0">
-      {children}
-    </h3>
-  ),
-  h4: ({ children }) => (
-    <h4 className="mb-1.5 mt-3 text-[13px] font-semibold text-slate-200 first:mt-0">{children}</h4>
-  ),
-  h5: ({ children }) => (
-    <h5 className="mb-1 mt-2 text-[12.5px] font-semibold text-slate-200 first:mt-0">{children}</h5>
-  ),
-  h6: ({ children }) => (
-    <h6 className="mb-1 mt-2 text-[12px] font-semibold text-slate-300 first:mt-0">{children}</h6>
-  ),
-  p: ({ children }) => <p className="my-2 break-words first:mt-0 last:mb-0">{children}</p>,
-  ul: ({ children }) => (
-    <ul className="my-2 list-disc space-y-1 pl-5 marker:text-slate-500">{children}</ul>
-  ),
-  ol: ({ children }) => (
-    <ol className="my-2 list-decimal space-y-1 pl-5 marker:text-slate-500">{children}</ol>
-  ),
-  li: ({ children }) => <li className="pl-0.5 [&>p]:my-0">{children}</li>,
-  strong: ({ children }) => <strong className="font-semibold text-slate-100">{children}</strong>,
-  em: ({ children }) => <em className="italic text-slate-300">{children}</em>,
-  del: ({ children }) => <del className="text-slate-500 line-through">{children}</del>,
-  blockquote: ({ children }) => (
-    <blockquote className="my-3 border-l-2 border-sky-400/30 pl-3 text-slate-400">
-      {children}
-    </blockquote>
-  ),
-  hr: () => <hr className="my-4 border-white/[0.07]" />,
-  a: ({ children, href }) => (
-    <span className="text-sky-300 underline decoration-sky-400/30 underline-offset-2" title={href}>
-      {children}
-    </span>
-  ),
-  img: ({ alt }) => <span className="text-slate-500">[image{alt ? `: ${alt}` : ""} omitted]</span>,
-  pre: ({ children }) => (
-    <pre className="my-3 overflow-x-auto rounded-lg border border-white/[0.08] bg-black/35 p-3 font-mono text-[11.5px] leading-relaxed text-slate-200">
-      {children}
-    </pre>
-  ),
-  code: ({ className, children }) => {
-    const text = String(children).replace(/\n$/, "");
-    if (className?.startsWith("language-") || text.includes("\n")) {
-      return <code className="block font-mono">{text}</code>;
-    }
-    return (
-      <code className="rounded border border-white/[0.06] bg-white/[0.06] px-1 py-0.5 font-mono text-[0.9em] text-sky-200">
+// action, never a side effect of rendering an answer. The one exception is the
+// internal `#cite-N` anchors that citation markers are rewritten into.
+function buildMarkdownComponents(sources: ResearchSource[]): Components {
+  return {
+    h1: ({ children }) => (
+      <h1 className="mb-2 mt-4 text-[15px] font-semibold text-slate-100 first:mt-0">{children}</h1>
+    ),
+    h2: ({ children }) => (
+      <h2 className="mb-2 mt-4 text-[14px] font-semibold text-slate-100 first:mt-0">{children}</h2>
+    ),
+    h3: ({ children }) => (
+      <h3 className="mb-1.5 mt-3 text-[13.5px] font-semibold text-slate-100 first:mt-0">
         {children}
-      </code>
-    );
-  },
-  table: ({ children }) => (
-    <div className="my-3 overflow-x-auto">
-      <table className="w-full border-collapse text-[12px]">{children}</table>
-    </div>
-  ),
-  th: ({ children }) => (
-    <th className="border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-left font-semibold text-slate-200">
-      {children}
-    </th>
-  ),
-  td: ({ children }) => (
-    <td className="border border-white/[0.06] px-2 py-1 align-top text-slate-300">{children}</td>
-  ),
-};
+      </h3>
+    ),
+    h4: ({ children }) => (
+      <h4 className="mb-1.5 mt-3 text-[13px] font-semibold text-slate-200 first:mt-0">
+        {children}
+      </h4>
+    ),
+    h5: ({ children }) => (
+      <h5 className="mb-1 mt-2 text-[12.5px] font-semibold text-slate-200 first:mt-0">
+        {children}
+      </h5>
+    ),
+    h6: ({ children }) => (
+      <h6 className="mb-1 mt-2 text-[12px] font-semibold text-slate-300 first:mt-0">{children}</h6>
+    ),
+    p: ({ children }) => <p className="my-2 break-words first:mt-0 last:mb-0">{children}</p>,
+    ul: ({ children }) => (
+      <ul className="my-2 list-disc space-y-1 pl-5 marker:text-slate-500">{children}</ul>
+    ),
+    ol: ({ children }) => (
+      <ol className="my-2 list-decimal space-y-1 pl-5 marker:text-slate-500">{children}</ol>
+    ),
+    li: ({ children }) => <li className="pl-0.5 [&>p]:my-0">{children}</li>,
+    strong: ({ children }) => <strong className="font-semibold text-slate-100">{children}</strong>,
+    em: ({ children }) => <em className="italic text-slate-300">{children}</em>,
+    del: ({ children }) => <del className="text-slate-500 line-through">{children}</del>,
+    blockquote: ({ children }) => (
+      <blockquote className="my-3 border-l-2 border-sky-400/30 pl-3 text-slate-400">
+        {children}
+      </blockquote>
+    ),
+    hr: () => <hr className="my-4 border-white/[0.07]" />,
+    a: ({ children, href }) => {
+      const citation = /^#cite-(\d+)$/.exec(href ?? "");
+      if (citation) {
+        const id = Number(citation[1]);
+        const source = sources.find((item) => item.id === id);
+        if (source) return <CitationChip id={id} source={source} />;
+      }
+      return (
+        <span
+          className="text-sky-300 underline decoration-sky-400/30 underline-offset-2"
+          title={href}
+        >
+          {children}
+        </span>
+      );
+    },
+    img: ({ alt }) => (
+      <span className="text-slate-500">[image{alt ? `: ${alt}` : ""} omitted]</span>
+    ),
+    pre: ({ children }) => (
+      <pre className="my-3 overflow-x-auto rounded-lg border border-white/[0.08] bg-black/35 p-3 font-mono text-[11.5px] leading-relaxed text-slate-200">
+        {children}
+      </pre>
+    ),
+    code: ({ className, children }) => {
+      const text = String(children).replace(/\n$/, "");
+      if (className?.startsWith("language-") || text.includes("\n")) {
+        return <code className="block font-mono">{text}</code>;
+      }
+      return (
+        <code className="rounded border border-white/[0.06] bg-white/[0.06] px-1 py-0.5 font-mono text-[0.9em] text-sky-200">
+          {children}
+        </code>
+      );
+    },
+    table: ({ children }) => (
+      <div className="my-3 overflow-x-auto">
+        <table className="w-full border-collapse text-[12px]">{children}</table>
+      </div>
+    ),
+    th: ({ children }) => (
+      <th className="border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-left font-semibold text-slate-200">
+        {children}
+      </th>
+    ),
+    td: ({ children }) => (
+      <td className="border border-white/[0.06] px-2 py-1 align-top text-slate-300">{children}</td>
+    ),
+  };
+}
 
-function MessageBody({ content, markdown }: { content: string; markdown: boolean }) {
+function MessageBody({
+  content,
+  markdown,
+  sources,
+}: {
+  content: string;
+  markdown: boolean;
+  sources: ResearchSource[];
+}) {
+  const components = useMemo(() => buildMarkdownComponents(sources), [sources]);
+
   if (!markdown) {
     return <p className="whitespace-pre-wrap break-words">{content}</p>;
   }
 
   return (
     <div className="min-w-0">
-      <Markdown remarkPlugins={[remarkGfm]} skipHtml components={MARKDOWN_COMPONENTS}>
+      <Markdown remarkPlugins={[remarkGfm]} skipHtml components={components}>
         {content}
       </Markdown>
     </div>
@@ -107,13 +139,17 @@ function MessageBody({ content, markdown }: { content: string; markdown: boolean
 function sanitizeCitations(content: string, sourceCount: number): string {
   if (sourceCount < 1) return content;
   return content
-    .replace(/\[(\s*\d+(?:\s*,\s*\d+)*\s*)\]/g, (_match, group: string) => {
+    .replace(/\[(\s*\d+(?:\s*,\s*\d+)*\s*)\](?!\()/g, (_match, group: string) => {
       const numbers = group
         .split(",")
         .map((part) => Number(part.trim()))
         .filter((value) => Number.isInteger(value) && value >= 1 && value <= sourceCount);
       if (numbers.length === 0) return "";
-      return `[${Array.from(new Set(numbers)).join(", ")}]`;
+      // Rewrite to internal anchors so react-markdown hands each marker to the
+      // citation chip. The href never leaves the app: `a` intercepts it.
+      return Array.from(new Set(numbers))
+        .map((value) => `[[${value}]](#cite-${value})`)
+        .join(" ");
     })
     .replace(/\s+([.,;:!?])/g, "$1")
     .replace(/[ \t]{2,}/g, " ");
@@ -214,7 +250,11 @@ function Entry({ entry }: { entry: ChatEntry }) {
                   : "No answer was returned."}
             </span>
           ) : (
-            <MessageBody content={displayContent} markdown={isAssistant} />
+            <MessageBody
+              content={displayContent}
+              markdown={isAssistant}
+              sources={entry.sources ?? []}
+            />
           )}
           {entry.state === "streaming" && displayContent ? (
             <span className="stream-caret ml-0.5 inline-block h-3.5 w-1.5 rounded-[1px] bg-sky-300 align-text-bottom" />
