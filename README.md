@@ -1,5 +1,8 @@
 # Local Research Agent
 
+[![Latest release](https://img.shields.io/github/v/release/Davood121/local-research-agent?label=download)](https://github.com/Davood121/local-research-agent/releases/latest)
+[![CI](https://github.com/Davood121/local-research-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Davood121/local-research-agent/actions/workflows/ci.yml)
+
 A local-first AI research agent desktop app (Tauri v2 + Rust +
 React/TypeScript). All inference is local. Chat is offline-capable; research
 reads result pages from the public web only when you explicitly start it. No
@@ -13,6 +16,28 @@ coverage checks with one retry, in-memory BM25 retrieval, cited research
 answers, and a **built-in llama.cpp engine** (no separate server needed) are
 implemented. Persistent retrieval, embeddings, memory, and the agent canvas
 are **not** implemented yet.
+
+## Download and install
+
+Installers are attached to the
+[latest release](https://github.com/Davood121/local-research-agent/releases/latest).
+No account, API key, or cloud service is involved.
+
+| OS                        | Download                                                           | First-run notes                                                                                                                                               |
+| ------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows 10/11 (x64)       | `Local Research Agent_*_x64-setup.exe` (recommended) or the `.msi` | The installer is unsigned, so SmartScreen may ask for **More info → Run anyway**. It installs WebView2 automatically if it is missing.                        |
+| macOS 11+ (Apple Silicon) | `Local Research Agent_*.dmg`                                       | Unsigned and not notarized: right-click the app → **Open** on first launch, or run `xattr -dr com.apple.quarantine "/Applications/Local Research Agent.app"`. |
+| Linux (x64)               | `*.AppImage` or `*.deb`                                            | `chmod +x` the AppImage and run it, or `sudo apt install ./<file>.deb`. The AppImage needs a FUSE runtime.                                                    |
+
+Then:
+
+1. Open the app and use the download button in the header to fetch a model.
+   **Qwen2.5 1.5B Instruct (Q4_K_M, ~1 GB)** is a good default; 0.5B is faster but
+   weaker, 3B is better but slower on CPU.
+2. Pick **CPU** or **GPU** under **Run insights → Compute** (GPU is offered only
+   when the driver exposes a discrete Vulkan/Metal device).
+3. Chat. Research additionally needs a local SearXNG at `http://127.0.0.1:8080`;
+   see [docs/RESEARCH.md](docs/RESEARCH.md). Everything else works offline.
 
 ## Requirements
 
@@ -48,6 +73,7 @@ are **not** implemented yet.
   driver expose a discrete device. If a model cannot be loaded on the GPU (for
   example, it does not fit in VRAM), the error is shown and the CPU choice stays
   one click away.
+
 - **SearXNG** for research, run separately at `http://127.0.0.1:8080` with JSON
   output enabled. Chat works without it; research shows a setup state until it
   is reachable. The bundled settings aggregate DuckDuckGo, Brave, Wikipedia,
