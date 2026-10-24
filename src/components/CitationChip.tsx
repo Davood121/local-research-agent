@@ -24,6 +24,7 @@ export function CitationChip({ id, source }: { id: number; source: ResearchSourc
   const buttonRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
+  const openedWithKeyboard = useRef(false);
 
   const measure = () => {
     const rect = buttonRef.current?.getBoundingClientRect();
@@ -76,6 +77,11 @@ export function CitationChip({ id, source }: { id: number; source: ResearchSourc
     };
   }, [pinned]);
 
+  useEffect(() => {
+    if (!pinned || !openedWithKeyboard.current) return;
+    cardRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  }, [pinned]);
+
   const copy = async (kind: "citation" | "url") => {
     if (!navigator.clipboard) return;
     const text =
@@ -108,6 +114,12 @@ export function CitationChip({ id, source }: { id: number; source: ResearchSourc
         aria-expanded={visible}
         onMouseEnter={show}
         onMouseLeave={hide}
+        onMouseDown={() => {
+          openedWithKeyboard.current = false;
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") openedWithKeyboard.current = true;
+        }}
         onFocus={show}
         onBlur={hide}
         onClick={() => {
