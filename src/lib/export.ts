@@ -172,7 +172,7 @@ export function generateJsonExport(entries: ChatEntry[]): string {
   return JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
-      agent: "Local Research Agent v0.2.0",
+      agent: "Local Research Agent v0.2.1",
       conversation: entries.map((entry) => ({
         id: entry.id,
         role: entry.role,

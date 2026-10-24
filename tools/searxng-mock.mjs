@@ -125,8 +125,7 @@ async function searchDuckDuckGo(query) {
       for (const item of data.Infobox.content) {
         if (item.label && item.value && typeof item.value === "string") {
           if (results[0]) {
-            results[0].content +=
-              ` | ${item.label}: ${item.value}`;
+            results[0].content += ` | ${item.label}: ${item.value}`;
           }
         }
       }
