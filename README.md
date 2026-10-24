@@ -1,190 +1,217 @@
-# Local Research Agent
+<div align="center">
 
-[![Latest release](https://img.shields.io/github/v/release/Davood121/local-research-agent?label=download)](https://github.com/Davood121/local-research-agent/releases/latest)
-[![CI](https://github.com/Davood121/local-research-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Davood121/local-research-agent/actions/workflows/ci.yml)
+<img src="src-tauri/icons/icon.png" alt="Local Research Agent" width="120" />
 
-A local-first AI research agent desktop app (Tauri v2 + Rust +
-React/TypeScript). All inference is local. Chat is offline-capable; research
-reads result pages from the public web only when you explicitly start it. No
-cloud inference, API keys, analytics, or telemetry uploads.
+# 🔍 Local Research Agent
 
-**Status: local chat + intelligent local research (Phases 0–4) + embedded
-engine.** The app shell, typed live event bus, system telemetry, streaming
-local chat, deterministic multi-query planning, intent-based SearXNG engine
-routing, source merge/rank/diversification, bounded page reads, evidence
-coverage checks with one retry, in-memory BM25 retrieval, cited research
-answers, and a **built-in llama.cpp engine** (no separate server needed) are
-implemented. Persistent retrieval, embeddings, memory, and the agent canvas
-are **not** implemented yet.
+**A privacy-first AI research assistant that runs entirely on your machine.**  
+No cloud. No API keys. No telemetry. Just pure local intelligence.
 
-## Download and install
+[![Latest Release](https://img.shields.io/github/v/release/Davood121/local-research-agent?style=for-the-badge&logo=github&label=Download&color=2ea44f)](https://github.com/Davood121/local-research-agent/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/Davood121/local-research-agent/ci.yml?style=for-the-badge&logo=githubactions&label=CI&logoColor=white)](https://github.com/Davood121/local-research-agent/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-blue?style=for-the-badge)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=for-the-badge&logo=windows)](https://github.com/Davood121/local-research-agent/releases/latest)
+[![Version](https://img.shields.io/badge/version-0.1.9-orange?style=for-the-badge)](https://github.com/Davood121/local-research-agent/releases/tag/v0.1.9)
 
-Installers are attached to the
-[latest release](https://github.com/Davood121/local-research-agent/releases/latest).
-No account, API key, or cloud service is involved.
+<br/>
 
-| OS                        | Download                                                           | First-run notes                                                                                                                                               |
-| ------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows 10/11 (x64)       | `Local Research Agent_*_x64-setup.exe` (recommended) or the `.msi` | The installer is unsigned, so SmartScreen may ask for **More info → Run anyway**. It installs WebView2 automatically if it is missing.                        |
-| macOS 11+ (Apple Silicon) | `Local Research Agent_*.dmg`                                       | Unsigned and not notarized: right-click the app → **Open** on first launch, or run `xattr -dr com.apple.quarantine "/Applications/Local Research Agent.app"`. |
-| Linux (x64)               | `*.AppImage` or `*.deb`                                            | `chmod +x` the AppImage and run it, or `sudo apt install ./<file>.deb`. The AppImage needs a FUSE runtime.                                                    |
+> Built with **Tauri v2** · **Rust** · **React 18** · **TypeScript** · **llama.cpp** (embedded)
 
-Then:
+</div>
 
-1. Open the app and use the download button in the header to fetch a model.
-   **Qwen2.5 1.5B Instruct (Q4_K_M, ~1 GB)** is a good default; 0.5B is faster but
-   weaker, 3B is better but slower on CPU.
-2. Pick **CPU** or **GPU** under **Run insights → Compute** (GPU is offered only
-   when the driver exposes a discrete Vulkan/Metal device).
-3. Chat. Research additionally needs a local SearXNG at `http://127.0.0.1:8080`;
-   see [docs/RESEARCH.md](docs/RESEARCH.md). Everything else works offline.
+---
 
-## Requirements
+## ✨ What's New in v0.1.9
 
-- Rust 1.90 (pinned by `rust-toolchain.toml`, installed automatically by rustup)
-- Node.js 22+
-- Per-OS native dependencies — see [docs/BUILD.md](docs/BUILD.md)
-- **Nothing else is required for chat.** The app embeds a llama.cpp engine and
-  runs GGUF models in-process, on the **CPU or a discrete GPU**. Use the download
-  button in the header (or the prompt on an empty chat screen) to fetch a curated
-  model in-app, or drop a `.gguf` file into the app's models folder and it
-  appears in the model picker:
+| Feature | Description |
+|---------|-------------|
+| 📤 **Research Dossier Export** | Export any research session as **Markdown**, **HTML**, or **JSON** — one click |
+| 🗂️ **Session Archive** | Auto-saved session history with search, rename, and restore — up to 50 sessions |
+| 🎛️ **Research Depth Controls** | Choose **Quick**, **Balanced**, or **Deep** research intensity |
+| 🌐 **Domain Focus** | Target **General**, **Academic**, or **News** sources per query |
 
-  - Windows: `%APPDATA%\dev.localresearch.agent\models\`
-  - macOS: `~/Library/Application Support/dev.localresearch.agent/models/`
-  - Linux: `~/.local/share/dev.localresearch.agent/models/`
+---
 
-  The in-app catalog offers Qwen2.5 0.5B, 1.5B, and 3B Instruct (Q4_K_M) from
-  Hugging Face over HTTPS. Downloads show progress, can be cancelled, and are
-  written to a `.part` file until the size is verified. The equivalent manual
-  download is:
+## 🚀 Features at a Glance
 
-  ```bash
-  curl -L -o "$APPDATA/dev.localresearch.agent/models/qwen2.5-1.5b-instruct-q4_k_m.gguf" \
-    https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
-  ```
+<table>
+<tr>
+<td width="50%">
 
-  Any model whose file stem matches a chat request takes priority inside the
-  app; a separately installed **Ollama** (fixed at `http://127.0.0.1:11434`) is
-  used afterwards as a fallback for names it serves. Ollama stays optional:
-  the app does not bundle, download, start, or update it. Pick **CPU** or **GPU**
-  under **Run insights → Compute**; the switch takes effect on the next message
-  and is remembered across restarts. GPU is only offered when the build and
-  driver expose a discrete device. If a model cannot be loaded on the GPU (for
-  example, it does not fit in VRAM), the error is shown and the CPU choice stays
-  one click away.
+### 🧠 Local AI Inference
+- Embedded **llama.cpp** engine — no server needed
+- Runs **GGUF models** in-process (CPU & GPU)
+- In-app model downloader (Qwen2.5 family)
+- Drop any `.gguf` file into the models folder
+- Vulkan (Windows/Linux) + Metal (macOS) GPU acceleration
+- Optional **Ollama** fallback
 
-- **SearXNG** for research, run separately at `http://127.0.0.1:8080` with JSON
-  output enabled. Chat works without it; research shows a setup state until it
-  is reachable. The bundled settings aggregate DuckDuckGo, Brave, Wikipedia,
-  Wikidata, Mwmbl, Wiby, and Yep without API keys. See
-  [docs/RESEARCH.md](docs/RESEARCH.md).
+</td>
+<td width="50%">
 
-The app runs chat inference either in-process (embedded engine, preferred when
-the selected model is one of the GGUF files above) or through Ollama at the
-fixed loopback address. It never accepts a different endpoint, API key, or
-cloud-routed model. Models with a `remote_host` or a `:cloud` name are filtered
-out of the picker and rejected by the backend. SearXNG is likewise fixed at
-`127.0.0.1:8080`; the webview cannot choose a search or inference endpoint.
+### 🔎 Intelligent Research
+- Deterministic **multi-query planning**
+- Intent-based **SearXNG** engine routing
+- Source merge, rank & domain diversification
+- **BM25** in-memory retrieval
+- Bounded concurrent page reads (SSRF-safe)
+- Cited answers with numbered source cards
 
-## Installers
+</td>
+</tr>
+<tr>
+<td>
 
-Download the app installers from the
-[latest release](https://github.com/Davood121/local-research-agent/releases/latest):
-Windows `.exe` or `.msi`, macOS `.dmg`, or Linux `.deb` / `.AppImage`. On macOS,
-drag the app from the DMG into Applications. See
-[docs/BUILD.md](docs/BUILD.md#installers-and-releases) for installation steps
-and platform notes.
+### 📦 New in v0.1.9
+- **Export Dossier** — MD / HTML / JSON
+- **Session Archive** — search & restore history
+- **Depth** (Quick / Balanced / Deep)
+- **Focus** (General / Academic / News)
 
-## Run in development
+</td>
+<td>
 
-Either install a GGUF file into the models folder (see above) or start Ollama
-and pull one local chat model (the Ollama desktop app starts the server
-automatically; use `ollama serve` for a CLI-only install):
+### 🔒 Privacy by Design
+- Zero cloud inference — 100% local
+- No API keys, accounts, or subscriptions
+- No telemetry or analytics
+- Fixed loopback-only endpoints
+- Deny-by-default Tauri capabilities + CSP
 
-```bash
-ollama serve
-ollama pull qwen3:4b
+</td>
+</tr>
+</table>
+
+---
+
+## 📥 Download & Install
+
+> **One-click installers — no account, no API key, no cloud.**
+
+| Platform | Download | First-Run Notes |
+|----------|----------|-----------------|
+| 🪟 **Windows 10/11** (x64) | [`_x64-setup.exe`](https://github.com/Davood121/local-research-agent/releases/latest) or `.msi` | SmartScreen: click **More info → Run anyway** (installer is unsigned) |
+| 🍎 **macOS 11+** (Apple Silicon / Intel) | [`.dmg`](https://github.com/Davood121/local-research-agent/releases/latest) | Right-click → **Open** on first launch, or run: `xattr -dr com.apple.quarantine "/Applications/Local Research Agent.app"` |
+| 🐧 **Linux** (x64) | [`.AppImage`](https://github.com/Davood121/local-research-agent/releases/latest) or `.deb` | `chmod +x *.AppImage && ./Local*.AppImage` — or `sudo apt install ./*.deb` |
+
+### First-Time Setup (3 steps)
+
+```
+1. Launch the app
+2. Click the ⬇ download button → pick a model (Qwen2.5 1.5B recommended)
+3. Start chatting — research needs SearXNG (see below)
 ```
 
-Then install the app dependencies and start Tauri:
+**Recommended models:**
+
+| Model | Size | Speed | Quality |
+|-------|------|-------|---------|
+| Qwen2.5 0.5B Q4_K_M | ~400 MB | ⚡ Fastest | Basic |
+| **Qwen2.5 1.5B Q4_K_M** ← default | ~1 GB | ✅ Balanced | Good |
+| Qwen2.5 3B Q4_K_M | ~2 GB | 🐢 Slower | Best |
+
+---
+
+## 🗂️ Session Archive & Export (New)
+
+The **Archive** button (top-right) opens a searchable history of all your research sessions:
+
+- 🔍 **Search** sessions by title or content
+- ✏️ **Rename** any session inline
+- ♻️ **Restore** a session back into chat
+- 🗑️ **Delete** individual sessions or clear all
+- Auto-saves up to **50 sessions** to localStorage
+
+The **Export** button lets you download the current research session as:
+
+```
+📄 Markdown   — clean, portable, great for notes
+🌐 HTML       — styled, shareable in a browser
+📦 JSON       — structured data for further processing
+```
+
+---
+
+## 🎛️ Research Depth & Focus (New)
+
+When Research mode is active, the composer shows two control groups:
+
+**Depth:**
+| Option | Behaviour |
+|--------|-----------|
+| ⚡ Quick | 1–2 search passes, fast answer |
+| ⚖️ Balanced | 2–3 passes with retry (default) |
+| 🔬 Deep | Full multi-pass with coverage check |
+
+**Focus:**
+| Option | Sources targeted |
+|--------|-----------------|
+| 🌐 General | All engines (DuckDuckGo, Brave, Mwmbl…) |
+| 🎓 Academic | Wikipedia, Wikidata, academic sources |
+| 📰 News | News-biased engines |
+
+---
+
+## ⚙️ Development Setup
+
+### Prerequisites
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| **Node.js** | 22+ | [`nodejs.org`](https://nodejs.org) |
+| **Rust** | 1.90 (auto-pinned) | [`rustup.rs`](https://rustup.rs) — version pinned by `rust-toolchain.toml` |
+| **Vulkan SDK** | Latest | Windows/Linux GPU builds only — [`vulkan.lunarg.com`](https://vulkan.lunarg.com) |
+
+### Run in Development
 
 ```bash
+# Option A: Use embedded GGUF (drop a .gguf file into the models folder)
+# Option B: Use Ollama
+ollama serve
+ollama pull qwen3:4b
+
+# Install dependencies and start
 npm ci
 npm run tauri:dev
 ```
 
-The header shows the number of local chat models (embedded GGUFs and Ollama
-models appear together; embedded files are marked `embedded gguf` in the
-backend model list). Select
-a model, send a prompt, and watch tokens arrive in the conversation and run
-metrics in the right-hand **Run insights** panel. **Stop** cancels the active
-generation. The model selection and chat/research mode are remembered locally
-with `localStorage`; no other state is persisted.
-
-Assistant replies render standard Markdown headings, lists, emphasis, tables,
-and code. Raw HTML is ignored, links are not navigable, and remote images are
-never loaded while rendering an answer. Chat is primed with a short description
-of this app, so asking **what can you do?** describes Local Research Agent rather
-than a generic language model.
-
-For research, start SearXNG (or the deterministic mock) at
-`127.0.0.1:8080`:
+### Research (needs SearXNG)
 
 ```bash
-# Real local instance (Docker example in tools/searxng)
+# Docker (recommended)
 cd tools/searxng && docker compose up -d
 
-# No Docker? Native install inside WSL Ubuntu (see tools/searxng/README.md)
+# WSL Ubuntu (no Docker)
 ~/start-searxng.sh
 
-# Or the development mock, which returns real public test pages
+# Dev mock (no SearXNG required)
 npm run mock:search
 ```
 
-Then switch the composer to **Research**, ask a question, and watch the
-left-hand **Sources** panel fill with numbered result pages. The answer keeps
-its citations; if the model omits inline labels, the app appends a short numbered
-`Sources:` footer for the excerpts it was given instead of repeating the full
-panel list.
-Research reads a small number of result pages directly from the public web; see
-[docs/RESEARCH.md](docs/RESEARCH.md) for the exact limits, disclosures, and
-troubleshooting.
+---
 
-If neither a GGUF in the models folder nor Ollama is available, the chat screen
-explains the two ways to install a model. Use the
-refresh button or wait for the 30-second health check after starting Ollama.
-Search
-status is refreshed on the same interval.
-
-Use the **Debug Stream** button (dev builds only) to emit fake token/metric
-events at 10 Hz for 10 seconds.
-
-Frontend-only preview (`npm run dev`) works in a browser but has no Tauri IPC, so
-the app shows the offline screen; this is expected.
-
-## Build
+## 🏗️ Build from Source
 
 ```bash
-npm run tauri:build:windows   # MSI + NSIS
-npm run tauri:build:macos     # .app + .dmg
-npm run tauri:build:linux     # AppImage + .deb
+# Build for your current OS
+npm run tauri:build
+
+# Platform-specific
+npm run tauri:build:windows    # → .msi + .exe (NSIS)
+npm run tauri:build:macos      # → .app + .dmg
+npm run tauri:build:linux      # → .AppImage + .deb
 ```
 
-Generic: `npm run tauri:build` (all bundles valid for the host OS).
+> **Note:** Windows & Linux builds require the Vulkan SDK. macOS uses Metal automatically.
 
-Ollama is an optional runtime dependency, not a build dependency. The embedded
-engine links llama.cpp statically into the app binary. The installers remain
-offline and do not download a model server or a model. Windows/Linux builds
-enable the Vulkan backend, so the Vulkan SDK must be installed on the build
-machine; macOS uses Metal. See [docs/BUILD.md](docs/BUILD.md#gpu-backend).
+---
 
-## Quality gates
+## 🧪 Quality Gates
 
 ```bash
-npm run lint
-npm run format:check
-npm run build                 # tsc --noEmit + vite build
+npm run lint                   # ESLint (0 warnings policy)
+npm run format:check           # Prettier
+npm run build                  # tsc --noEmit + vite build
 
 cd src-tauri
 cargo fmt --all -- --check
@@ -192,62 +219,111 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-## What is implemented
+All gates are enforced in CI on every push and pull request.
 
-- **Phase 0:** Tauri v2 + React 18 + TS + Vite scaffold, Tailwind, Zustand,
-  ESLint/Prettier/rustfmt/clippy, pinned toolchain, cross-platform bundles,
-  hardened release profile, SHA-pinned CI on three OSes, deny-by-default
-  capabilities, CSP, docs.
-- **Phase 1:** `AppEvent` enum mirrored in TypeScript, broadcast bus +
-  `CancellationToken`, idempotent `subscribe_events` forwarder, debug-only
-  10 Hz stream, Zustand stores, throttled activity panel.
-- **Phase 2:** adaptive telemetry task (5 s idle / 2 s loaded / 1 s generating),
-  RAM + disk via `sysinfo`, GPU dispatch across NVML, AMD sysfs, Apple unified
-  memory, `Unavailable` fallback, status bar with exact GB formatting, unit
-  tests for formatting, AMD sysfs parsing, and event serialization.
-- **Phase 3:** fixed-loopback Ollama status/model discovery, local-only model
-  filtering, validated chat requests, streaming NDJSON parsing, token/metrics
-  events, first-token and tokens-per-second metrics, single-chat concurrency
-  guard, cooperative cancellation, and a redesigned conversation UI with model
-  selection, setup states, error handling, and run insights.
-- **Embedded engine:** llama.cpp compiled statically into the binary. GGUF files
-  placed in the app's models folder are scanned by file stem and selectable in
-  the picker without Ollama; chatted models load in-process and stream
-  deterministic-sampled tokens with the same Step/Token/Metrics events, UTF-8
-  safe partial emission, prompt-chunked prefill, and cooperative cancellation
-  as the Ollama path. A curated Hugging Face catalog downloads GGUF models
-  in-app with progress, cancellation, size verification, and an HTTPS/host
-  allowlist; finished files appear in the picker without a restart. A
-  **CPU/GPU switch** in Run insights picks the device per model load: CPU keeps
-  all layers on the host, GPU offloads every layer to the best discrete Vulkan
-  (Windows/Linux) or Metal (macOS) device, ignoring integrated GPUs. The choice
-  persists in `<app data>/settings.json`; switching unloads resident weights so
-  the next message reloads them on the chosen device.
-- **Phase 4:** explicit Research mode, deterministic multi-query planning,
-  intent-based SearXNG engine routing, merged/deduplicated/ranked source
-  selection with domain and engine diversity, bounded concurrent page reads with
-  SSRF/private-address checks, manual redirect validation, HTML/plain-text
-  extraction, local evidence coverage checks with one bounded retry, in-memory
-  BM25 ranking, numbered `Sources` events, source cards, citation validation in
-  the UI, offline/setup states, and end-to-end cancellation across planning,
-  search, reads, retries, and generation. A deterministic SearXNG mock and setup
-  assets are included.
+---
 
-## What is explicitly NOT implemented
+## 📁 Models Folder
 
-Persistent retrieval (SQLite/page cache), embedding indexes, long-term memory,
-agent orchestration, LoRA, export,
-updater, code signing, and later hardening phases. Retrieval is per-run and
-in-memory only. Ollama and SearXNG must be installed and managed by the user.
+Drop any `.gguf` file here and it appears in the picker immediately:
 
-## Documentation
+| OS | Path |
+|----|------|
+| 🪟 Windows | `%APPDATA%\dev.localresearch.agent\models\` |
+| 🍎 macOS | `~/Library/Application Support/dev.localresearch.agent/models/` |
+| 🐧 Linux | `~/.local/share/dev.localresearch.agent/models/` |
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Events](docs/EVENTS.md)
-- [Research setup and limits](docs/RESEARCH.md)
-- [Build & platform notes](docs/BUILD.md)
-- [Security](docs/SECURITY.md)
+**Manual download example:**
+```bash
+curl -L -o "qwen2.5-1.5b-instruct-q4_k_m.gguf" \
+  https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
+```
 
-## License
+---
 
-Dual-licensed under MIT OR Apache-2.0.
+## 🗺️ Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  Local Research Agent                │
+│                                                      │
+│  ┌──────────────┐    ┌──────────────────────────┐   │
+│  │  React + TS  │◄──►│   Tauri v2 IPC Bridge    │   │
+│  │  (Frontend)  │    │   (Rust backend)          │   │
+│  └──────────────┘    └──────────┬───────────────┘   │
+│                                 │                    │
+│              ┌──────────────────┼──────────────┐    │
+│              │                  │              │    │
+│     ┌────────▼──────┐  ┌────────▼───┐  ┌──────▼──┐ │
+│     │ llama.cpp     │  │  SearXNG   │  │  Ollama │ │
+│     │ (embedded)    │  │  (local)   │  │(optional)│ │
+│     │ CPU / GPU     │  │ :8080      │  │  :11434 │ │
+│     └───────────────┘  └────────────┘  └─────────┘ │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📋 Implementation Status
+
+### ✅ Implemented
+
+| Phase | Features |
+|-------|---------|
+| **Phase 0** | Tauri v2 + React 18 + TS + Vite scaffold, Tailwind, Zustand, ESLint/Prettier, cross-platform CI |
+| **Phase 1** | `AppEvent` typed bus, `CancellationToken`, broadcast forwarder, Zustand stores |
+| **Phase 2** | Adaptive system telemetry (RAM/disk/GPU), NVML + AMD sysfs + Metal, status bar |
+| **Phase 3** | Ollama discovery, streaming NDJSON chat, token/metrics events, run insights panel |
+| **Embedded Engine** | llama.cpp static link, GGUF scanner, CPU/GPU switch, in-app model downloader, Hugging Face catalog |
+| **Phase 4** | Research mode, multi-query planner, SearXNG routing, BM25 retrieval, cited answers, source cards |
+| **v0.1.9** | Export dossier (MD/HTML/JSON), session archive, depth controls, domain focus |
+
+### 🚧 Not Yet Implemented
+
+| Feature | Status |
+|---------|--------|
+| Persistent retrieval (SQLite page cache) | Planned |
+| Embedding indexes | Planned |
+| Long-term memory | Planned |
+| Agent canvas / orchestration | Planned |
+| LoRA fine-tuning | Future |
+| Auto-updater | Future |
+| Code signing / notarization | Future |
+
+---
+
+## 📚 Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [📐 Architecture](docs/ARCHITECTURE.md) | System design and component overview |
+| [⚡ Events](docs/EVENTS.md) | Typed event bus reference |
+| [🔎 Research Setup](docs/RESEARCH.md) | SearXNG setup, limits, and troubleshooting |
+| [🔧 Build Notes](docs/BUILD.md) | Platform-specific build instructions |
+| [🔒 Security](docs/SECURITY.md) | Security model and threat disclosure |
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a feature branch: `git checkout -b feat/your-feature`
+3. Make changes — all quality gates must pass (see above)
+4. Open a pull request against `main`
+
+All CI checks run automatically on every PR.
+
+---
+
+## 📄 License
+
+Dual-licensed under **[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)** — your choice.
+
+---
+
+<div align="center">
+
+Made with ❤️ for privacy-first AI  
+**[⬇ Download Latest Release](https://github.com/Davood121/local-research-agent/releases/latest)**
+
+</div>
