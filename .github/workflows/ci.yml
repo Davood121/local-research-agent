@@ -84,6 +84,43 @@ jobs:
           "VULKAN_SDK=$($sdk.FullName)" >> $env:GITHUB_ENV
           "$($sdk.FullName)\Bin" >> $env:GITHUB_PATH
 
+      # CMake defaults to the multi-config "Visual Studio 17 2022" generator on
+      # Windows. llama.cpp does not exercise that generator for its Vulkan
+      # backend (upstream builds Vulkan with Ninja), and it fails while
+      # installing the nested `vulkan-shaders-gen` tool, aborting the whole
+      # native build. Ninja is single-config, so the nested ExternalProject
+      # resolves $<CONFIG> the same way as the Linux and macOS builds. Ninja
+      # also needs cl.exe on PATH, so import the MSVC developer environment.
+      - name: Configure MSVC and Ninja
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw 'vswhere.exe not found.' }
+          $vs = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $vs) { throw 'Visual Studio with the MSVC C++ toolset was not found.' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation `
+            -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            $ninjaDir = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
+            if (-not (Test-Path (Join-Path $ninjaDir 'ninja.exe'))) {
+              throw 'Ninja was not found.'
+            }
+            $env:PATH = "$ninjaDir;$env:PATH"
+          }
+          if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
+            throw 'cl.exe was not found after importing the developer environment.'
+          }
+          "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
+          foreach ($name in 'PATH', 'INCLUDE', 'LIB', 'LIBPATH') {
+            "$name=$([Environment]::GetEnvironmentVariable($name))" >> $env:GITHUB_ENV
+          }
+          "cl: $((Get-Command cl).Source)"
+          "ninja: $((Get-Command ninja).Source) $(& ninja --version)"
+
       - name: Shorten Windows Cargo build path
         if: runner.os == 'Windows'
         shell: pwsh
@@ -108,8 +145,36 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (deny warnings)
+        if: runner.os != 'Windows'
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
+
+      # The native llama.cpp build can abort without printing the failing
+      # command, so keep a copy of the output and republish its tail as an
+      # annotation (see the next step) where it is always readable.
+      - name: Clippy (deny warnings)
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'clippy.log'
+          cargo clippy --all-targets -- -D warnings 2>&1 | Tee-Object -FilePath $log
+          exit $LASTEXITCODE
+
+      - name: Report native build output
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'clippy.log'
+          if (-not (Test-Path $log)) {
+            Write-Host 'No clippy log was captured.'
+            exit 0
+          }
+          $tail = @(Get-Content $log -Tail 40 | ForEach-Object { $_ -replace '%', '%25' -replace "`r", '' })
+          if ($tail.Count -eq 0) { exit 0 }
+          Write-Host '--- last 40 lines of clippy output ---'
+          $tail
+          "::error title=Clippy and native build output::$($tail -join '%0A')"
 
       - name: Rust tests
         working-directory: src-tauri

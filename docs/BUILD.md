@@ -102,6 +102,20 @@ $env:PATH = "$env:VULKAN_SDK\Bin;$env:PATH"
 
 A missing SDK fails the build in `llama-cpp-sys-2` with
 `Please install Vulkan SDK and ensure that VULKAN_SDK env variable is set`.
+
+On Windows, CMake must be driven by **Ninja** when building the Vulkan backend.
+CMake otherwise picks the multi-config `Visual Studio 17 2022` generator, and
+llama.cpp's nested `vulkan-shaders-gen` helper fails to install under it, which
+aborts the native build with no useful error. CI imports the MSVC developer
+environment and sets `CMAKE_GENERATOR=Ninja`. For a local MSVC build, start a
+*Developer PowerShell for VS 2022* prompt (Ninja ships with Visual Studio) and
+export the same variable:
+
+```powershell
+$env:CMAKE_GENERATOR = "Ninja"
+cargo build
+```
+
 The GPU choice is stored in `<app data>/settings.json`; it is ignored at startup
 if no discrete device is present, so a driver change cannot leave every chat
 failing.
@@ -190,19 +204,23 @@ that merge in a release build.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on `windows-latest`, `macos-latest`, and
-`ubuntu-22.04`:
+`.github/workflows/ci.yml` runs on `windows-2022`, `macos-latest`, and
+`ubuntu-24.04`:
 
 1. `rustup show` installs the pinned toolchain
-2. `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`
-3. `npm ci`, `npm run lint`, `npm run format:check`, `npm run build`
-4. `tauri build --ci --bundles …` (full **release** build, not debug)
+2. Windows imports the MSVC developer environment and builds the native GPU
+   backend with the Ninja CMake generator (`CMAKE_GENERATOR=Ninja`)
+3. `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`
+4. `npm ci`, `npm run lint`, `npm run format:check`, `npm run build`
+5. `tauri build --ci --bundles …` (full **release** build, not debug)
 
 Full release bundles are built on purpose: this exercises the LTO/strip profile
 and the installer-size criterion. It makes CI slower (typically 15–25 min per
 OS) but catches release-only failures. All actions are pinned to full commit
 SHAs and the workflow has `permissions: contents: read`. CI never runs the GUI
-or uploads crash data.
+or uploads crash data. On Windows the clippy step tees its output and, on
+failure, republishes the last lines as a workflow annotation, because the
+native llama.cpp build can abort without printing the failing command.
 
 ## Fail-closed behaviour
 
