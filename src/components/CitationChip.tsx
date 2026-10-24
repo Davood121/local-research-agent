@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import type { ResearchSource } from "../lib/events";
 import { CheckIcon, CopyIcon, GlobeIcon } from "./Icons";
@@ -130,83 +131,86 @@ export function CitationChip({ id, source }: { id: number; source: ResearchSourc
         {id}
       </button>
 
-      {visible && coords ? (
-        <div
-          ref={cardRef}
-          role="dialog"
-          aria-label={`Source ${id} preview`}
-          onMouseEnter={show}
-          onMouseLeave={hide}
-          style={{
-            position: "fixed",
-            left: coords.left,
-            top: coords.top,
-            width: CARD_WIDTH,
-            transform: coords.above ? "translateY(-100%)" : undefined,
-          }}
-          className="motion-scale-in z-[70] rounded-xl border border-white/10 bg-[#0a1120] p-3 text-left shadow-[0_18px_50px_rgba(0,0,0,0.65)]"
-        >
-          <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.12em] text-slate-500">
-            <span className="font-mono text-emerald-300/80">[{id}]</span>
-            <span className="min-w-0 flex-1 truncate normal-case tracking-normal text-slate-400">
-              {source.domain || "source"}
-            </span>
-            <span className={source.read ? "text-emerald-400/60" : "text-amber-400/60"}>
-              {source.read ? "page read" : "snippet"}
-            </span>
-          </div>
-
-          <p className="mt-1.5 text-[12px] font-medium leading-snug text-slate-100">
-            {source.title}
-          </p>
-
-          {source.snippet ? (
-            <p className="mt-1.5 line-clamp-4 text-[10.5px] leading-relaxed text-slate-400">
-              {source.snippet}
-            </p>
-          ) : null}
-
-          <p className="mt-1.5 break-all font-mono text-[9.5px] leading-snug text-slate-600">
-            {source.url}
-          </p>
-
-          <div className="mt-2.5 flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => void copy("citation")}
-              className="press inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1 text-[10px] font-medium text-slate-300 hover:border-white/20 hover:text-slate-100"
+      {visible && coords
+        ? createPortal(
+            <div
+              ref={cardRef}
+              role="dialog"
+              aria-label={`Source ${id} preview`}
+              onMouseEnter={show}
+              onMouseLeave={hide}
+              style={{
+                position: "fixed",
+                left: coords.left,
+                top: coords.top,
+                width: CARD_WIDTH,
+                transform: coords.above ? "translateY(-100%)" : undefined,
+              }}
+              className="motion-scale-in z-[70] rounded-xl border border-white/10 bg-[#0a1120] p-3 text-left shadow-[0_18px_50px_rgba(0,0,0,0.65)]"
             >
-              {copied === "citation" ? (
-                <CheckIcon className="h-2.5 w-2.5 text-emerald-400" />
-              ) : (
-                <CopyIcon className="h-2.5 w-2.5" />
-              )}
-              {copied === "citation" ? "Copied" : "Copy citation"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void copy("url")}
-              className="press inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1 text-[10px] font-medium text-slate-300 hover:border-white/20 hover:text-slate-100"
-            >
-              {copied === "url" ? (
-                <CheckIcon className="h-2.5 w-2.5 text-emerald-400" />
-              ) : (
-                <CopyIcon className="h-2.5 w-2.5" />
-              )}
-              {copied === "url" ? "Copied" : "Copy URL"}
-            </button>
-            <button
-              type="button"
-              onClick={focusInPanel}
-              title="Highlight this source in the sources panel"
-              className="press ml-auto inline-flex items-center gap-1 rounded-md border border-sky-400/25 bg-sky-400/[0.1] px-2 py-1 text-[10px] font-medium text-sky-200 hover:border-sky-400/45 hover:bg-sky-400/[0.18]"
-            >
-              <GlobeIcon className="h-2.5 w-2.5" />
-              Show
-            </button>
-          </div>
-        </div>
-      ) : null}
+              <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                <span className="font-mono text-emerald-300/80">[{id}]</span>
+                <span className="min-w-0 flex-1 truncate normal-case tracking-normal text-slate-400">
+                  {source.domain || "source"}
+                </span>
+                <span className={source.read ? "text-emerald-400/60" : "text-amber-400/60"}>
+                  {source.read ? "page read" : "snippet"}
+                </span>
+              </div>
+
+              <p className="mt-1.5 text-[12px] font-medium leading-snug text-slate-100">
+                {source.title}
+              </p>
+
+              {source.snippet ? (
+                <p className="mt-1.5 line-clamp-4 text-[10.5px] leading-relaxed text-slate-400">
+                  {source.snippet}
+                </p>
+              ) : null}
+
+              <p className="mt-1.5 break-all font-mono text-[9.5px] leading-snug text-slate-600">
+                {source.url}
+              </p>
+
+              <div className="mt-2.5 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void copy("citation")}
+                  className="press inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1 text-[10px] font-medium text-slate-300 hover:border-white/20 hover:text-slate-100"
+                >
+                  {copied === "citation" ? (
+                    <CheckIcon className="h-2.5 w-2.5 text-emerald-400" />
+                  ) : (
+                    <CopyIcon className="h-2.5 w-2.5" />
+                  )}
+                  {copied === "citation" ? "Copied" : "Copy citation"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void copy("url")}
+                  className="press inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1 text-[10px] font-medium text-slate-300 hover:border-white/20 hover:text-slate-100"
+                >
+                  {copied === "url" ? (
+                    <CheckIcon className="h-2.5 w-2.5 text-emerald-400" />
+                  ) : (
+                    <CopyIcon className="h-2.5 w-2.5" />
+                  )}
+                  {copied === "url" ? "Copied" : "Copy URL"}
+                </button>
+                <button
+                  type="button"
+                  onClick={focusInPanel}
+                  title="Highlight this source in the sources panel"
+                  className="press ml-auto inline-flex items-center gap-1 rounded-md border border-sky-400/25 bg-sky-400/[0.1] px-2 py-1 text-[10px] font-medium text-sky-200 hover:border-sky-400/45 hover:bg-sky-400/[0.18]"
+                >
+                  <GlobeIcon className="h-2.5 w-2.5" />
+                  Show
+                </button>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }
