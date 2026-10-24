@@ -789,7 +789,8 @@ fn percent_decode(input: &str) -> String {
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] == b'%' && index + 2 < bytes.len() {
-            if let (Some(high), Some(low)) = (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+            if let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
             {
                 out.push(high * 16 + low);
                 index += 3;
@@ -811,52 +812,6 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn decode_entities(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(start) = rest.find('&') {
-        out.push_str(&rest[..start]);
-        let tail = &rest[start..];
-        let entity_end = tail.find(';').filter(|end| *end <= 10);
-        let Some(end) = entity_end else {
-            out.push('&');
-            rest = &tail[1..];
-            continue;
-        };
-        let entity = &tail[1..end];
-        let decoded = match entity {
-            "amp" => Some('&'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "quot" => Some('"'),
-            "apos" | "#39" | "#x27" | "#X27" => Some('\''),
-            "nbsp" => Some(' '),
-            _ => entity
-                .strip_prefix("#x")
-                .or_else(|| entity.strip_prefix("#X"))
-                .and_then(|hex| u32::from_str_radix(hex, 16).ok())
-                .or_else(|| {
-                    entity
-                        .strip_prefix('#')
-                        .and_then(|dec| dec.parse::<u32>().ok())
-                })
-                .and_then(char::from_u32),
-        };
-        match decoded {
-            Some(ch) => {
-                out.push(ch);
-                rest = &tail[end + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &tail[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
 fn strip_tags(input: &str) -> String {
     let mut text = String::with_capacity(input.len());
     let mut in_tag = false;
@@ -871,10 +826,7 @@ fn strip_tags(input: &str) -> String {
             _ => {}
         }
     }
-    decode_entities(&text)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    collapse_whitespace(&decode_entities(&text))
 }
 
 /// A stable key for duplicate detection. Tracking parameters, fragments, a
