@@ -11,7 +11,7 @@ No cloud. No API keys. No telemetry. Just pure local intelligence.
 [![CI](https://img.shields.io/github/actions/workflow/status/Davood121/local-research-agent/ci.yml?style=for-the-badge&logo=githubactions&label=CI&logoColor=white)](https://github.com/Davood121/local-research-agent/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-blue?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=for-the-badge&logo=windows)](https://github.com/Davood121/local-research-agent/releases/latest)
-[![Version](https://img.shields.io/badge/version-0.2.2-orange?style=for-the-badge)](https://github.com/Davood121/local-research-agent/releases/tag/v0.2.2)
+[![Version](https://img.shields.io/badge/version-0.2.3-orange?style=for-the-badge)](https://github.com/Davood121/local-research-agent/releases/latest)
 
 <br/>
 
@@ -21,14 +21,16 @@ No cloud. No API keys. No telemetry. Just pure local intelligence.
 
 ---
 
-## ✨ What's New in v0.1.9
+## ✨ What's New in v0.2.3
 
 | Feature | Description |
 |---------|-------------|
-| 📤 **Research Dossier Export** | Export any research session as **Markdown**, **HTML**, or **JSON** — one click |
-| 🗂️ **Session Archive** | Auto-saved session history with search, rename, and restore — up to 50 sessions |
-| 🎛️ **Research Depth Controls** | Choose **Quick**, **Balanced**, or **Deep** research intensity |
-| 🌐 **Domain Focus** | Target **General**, **Academic**, or **News** sources per query |
+| ⌨️ **Command Palette** | `Ctrl+K` to reach any model, session, or action with fuzzy matching |
+| 🖨️ **PDF Export** | Print-ready A4 dossier through the OS print dialog — no PDF library bundled |
+| 💬 **Citation Previews** | Hover `[1]` for title, domain and snippet; copy a formatted citation |
+| 📊 **Source Compare** | Every page in a run with shared-term overlap, CSV and Markdown export |
+| 🗃️ **Document Vault** | Drop private notes; they become local research context |
+| 🎞️ **Motion Pack** | Compositor-only transitions, reduced-motion aware |
 
 ---
 
@@ -62,11 +64,12 @@ No cloud. No API keys. No telemetry. Just pure local intelligence.
 <tr>
 <td>
 
-### 📦 New in v0.1.9
-- **Export Dossier** — MD / HTML / JSON
-- **Session Archive** — search & restore history
-- **Depth** (Quick / Balanced / Deep)
-- **Focus** (General / Academic / News)
+### 📦 New in v0.2.3
+- **Command Palette** — `Ctrl+K`
+- **PDF export** plus MD / HTML / JSON
+- **Citation previews** on every `[n]`
+- **Source compare** with CSV export
+- **Document vault** for local context
 
 </td>
 <td>
@@ -127,8 +130,52 @@ The **Export** button lets you download the current research session as:
 ```
 📄 Markdown   — clean, portable, great for notes
 🌐 HTML       — styled, shareable in a browser
+🖨️ PDF        — print-ready A4, saved through the system dialog
 📦 JSON       — structured data for further processing
 ```
+
+Markdown and HTML exports also include the cross-source overlap table described
+below.
+
+---
+
+## 💬 Citation Previews & Source Compare (New)
+
+Every `[n]` marker in a research answer is a control. Hover or focus it to see the
+source title, domain, snippet and URL; click to pin the card open, copy a
+ready-to-paste citation, or jump to the card in the sources panel.
+
+The **Compare** button opens a table of every page the run read:
+
+| Column | Meaning |
+|--------|---------|
+| Access | `page read` (full text fetched) or `snippet` (search result only) |
+| Terms | significant terms extracted from title + snippet |
+| Max shared | largest number of terms shared with another source |
+| Related | ids of sources sharing at least 3 terms |
+
+Overlap is a local text measure, not a model verdict — the table says so. Copy it
+as Markdown or download CSV; the same table is appended to Markdown and HTML
+exports.
+
+---
+
+## 🗃️ Document Vault (New)
+
+The **Vault** tab stores text notes and documents in `localStorage` on your machine
+(up to 20). Vault contents are prepended to research queries as context, so private
+notes can shape a run without ever leaving the device.
+
+---
+
+## ⌨️ Command Palette (New)
+
+Press **Ctrl+K** (Cmd+K on macOS) anywhere in the app:
+
+- Switch models, chat/research mode, and research depth
+- Restore an archived session
+- Open export, compare, archive, or refresh local status
+- Type fragments (`nch`) to fuzzy-match actions
 
 ---
 
@@ -281,6 +328,7 @@ curl -L -o "qwen2.5-1.5b-instruct-q4_k_m.gguf" \
 | **Embedded Engine** | llama.cpp static link, GGUF scanner, CPU/GPU switch, in-app model downloader, Hugging Face catalog |
 | **Phase 4** | Research mode, multi-query planner, SearXNG routing, BM25 retrieval, cited answers, source cards |
 | **v0.1.9** | Export dossier (MD/HTML/JSON), session archive, depth controls, domain focus |
+| **v0.2.3** | Command palette, PDF export, citation previews, source compare table, document vault, motion pack |
 
 ### 🚧 Not Yet Implemented
 
