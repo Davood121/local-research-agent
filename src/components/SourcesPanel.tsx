@@ -113,12 +113,13 @@ export function SourcesPanel() {
             </div>
           ) : (
             <ol className="space-y-2">
-              {sources.map((source) => (
+              {sources.map((source, index) => (
                 <li
                   key={`${source.id}-${source.url}`}
                   data-source-id={source.id}
                   data-source-url={source.url}
-                  className="rounded-xl border border-white/[0.06] bg-white/[0.025] p-3"
+                  style={{ animationDelay: `${Math.min(index, 8) * 28}ms` }}
+                  className="motion-fade-up rounded-xl border border-white/[0.06] bg-white/[0.025] p-3 transition hover:border-white/[0.13] hover:bg-white/[0.04]"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="font-mono text-[10.5px] text-emerald-300/70">

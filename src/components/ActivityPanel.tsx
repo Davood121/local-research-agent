@@ -255,7 +255,7 @@ export function ActivityPanel() {
               {visibleSteps.map((step, index) => (
                 <li
                   key={`${step.run_id}-${step.node}-${index}`}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-2"
+                  className="motion-fade-up flex items-center justify-between gap-2 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-2"
                 >
                   <span className="flex min-w-0 items-center gap-2">
                     <span
