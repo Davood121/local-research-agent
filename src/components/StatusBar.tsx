@@ -33,6 +33,7 @@ export function StatusBar() {
   const connection = useChatStore((state) => state.connection);
   const version = useChatStore((state) => state.version);
   const searchConnection = useResearchStore((state) => state.connection);
+  const searchProvider = useResearchStore((state) => state.provider);
   const searchChecking = useResearchStore((state) => state.checking);
   const searchError = useResearchStore((state) => state.error);
 
@@ -90,7 +91,13 @@ export function StatusBar() {
           </span>
         </span>
         <Separator />
-        <span className="flex items-center gap-1.5" title={searchError ?? "Local SearXNG search"}>
+        <span
+          className="flex items-center gap-1.5"
+          title={
+            searchError ??
+            (searchProvider === "searxng" ? "Local SearXNG search" : "Built-in search")
+          }
+        >
           <span
             className={`h-1.5 w-1.5 rounded-full ${
               searchChecking || searchConnection === "checking"
@@ -104,7 +111,9 @@ export function StatusBar() {
             {searchChecking || searchConnection === "checking"
               ? "Checking search"
               : searchConnection === "connected"
-                ? "Search ready"
+                ? searchProvider === "searxng"
+                  ? "SearXNG ready"
+                  : "Built-in search"
                 : "Search offline"}
           </span>
         </span>

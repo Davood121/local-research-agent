@@ -23,6 +23,7 @@ export function Composer() {
   const focus = useResearchStore((state) => state.focus);
   const setFocus = useResearchStore((state) => state.setFocus);
   const searchConnection = useResearchStore((state) => state.connection);
+  const searchProvider = useResearchStore((state) => state.provider);
   const searchChecking = useResearchStore((state) => state.checking);
   const searchError = useResearchStore((state) => state.error);
   const refreshSearch = useResearchStore((state) => state.refresh);
@@ -89,7 +90,7 @@ export function Composer() {
             ? searchChecking
               ? "Checking local search…"
               : searchConnection === "offline"
-                ? "Start SearXNG at 127.0.0.1:8080, then retry…"
+                ? "Search is offline; retry to use the built-in engine…"
                 : activeTemplate
                   ? activeTemplate.placeholder
                   : "Ask a research question; result pages are read and cited…"
@@ -203,7 +204,9 @@ export function Composer() {
               title={
                 searchError ??
                 (mode === "research"
-                  ? "SearXNG runs locally on 127.0.0.1:8080"
+                  ? searchProvider === "searxng"
+                    ? "SearXNG runs locally on 127.0.0.1:8080"
+                    : "Built-in search reads public result pages directly"
                   : "Prompts never leave this machine")
               }
               className="flex min-w-0 items-center gap-1.5 pr-1 text-[10px] text-slate-600"
@@ -228,7 +231,9 @@ export function Composer() {
                   ? searchChecking || searchConnection === "checking"
                     ? "Checking search"
                     : searchConnection === "connected"
-                      ? "SearXNG ready"
+                      ? searchProvider === "searxng"
+                        ? "SearXNG ready"
+                        : "Built-in search"
                       : "Search offline"
                   : "Local inference"}
               </span>
@@ -238,8 +243,8 @@ export function Composer() {
           {researchOffline ? (
             <div className="mx-1 mb-1 flex items-start justify-between gap-3 rounded-lg border border-amber-400/20 bg-amber-400/[0.05] px-2.5 py-2">
               <p className="text-[10.5px] leading-relaxed text-amber-100/80">
-                Local search is offline. Start SearXNG at{" "}
-                <code className="font-mono text-amber-200/90">127.0.0.1:8080</code>, then retry.
+                Search is offline. Retry to fall back to the built-in engine, or start SearXNG at{" "}
+                <code className="font-mono text-amber-200/90">127.0.0.1:8080</code>.
               </p>
               <button
                 type="button"
