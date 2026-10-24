@@ -1,5 +1,6 @@
 import { ActivityPanel } from "./components/ActivityPanel";
 import { ChatPanel } from "./components/ChatPanel";
+import { CommandPalette } from "./components/CommandPalette";
 import { ExportModal } from "./components/ExportModal";
 import { ModelDownloads } from "./components/ModelDownloads";
 import { SessionsDrawer } from "./components/SessionsDrawer";
@@ -28,6 +29,7 @@ export default function App() {
       <StatusBar />
       <ModelDownloads />
       <SessionsDrawer />
+      <CommandPalette />
       <ExportModal isOpen={exportModalOpen} onClose={closeExport} targetEntryId={exportEntryId} />
     </div>
   );

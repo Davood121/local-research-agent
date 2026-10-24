@@ -157,6 +157,16 @@ export function TopBar() {
 
         <button
           type="button"
+          onClick={() => window.dispatchEvent(new Event("lra:command-palette"))}
+          title="Command palette (Ctrl+K)"
+          aria-label="Open command palette"
+          className="press flex h-9 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-xs font-medium text-slate-300 hover:border-white/20 hover:bg-white/[0.07] hover:text-slate-100"
+        >
+          <span className="font-mono text-[10px] tracking-tight text-slate-500">Ctrl K</span>
+        </button>
+
+        <button
+          type="button"
           onClick={openDrawer}
           title="Past research sessions"
           className="flex h-9 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/[0.07] hover:text-slate-100"
