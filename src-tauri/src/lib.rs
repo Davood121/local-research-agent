@@ -75,6 +75,9 @@ pub fn run() {
         commands::engine::engine_status,
         commands::engine::engine_unload,
         commands::engine::set_inference_device,
+        commands::models::list_model_catalog,
+        commands::models::download_model,
+        commands::models::cancel_model_download,
         commands::research::research_status,
         commands::research::start_research
     ]);
