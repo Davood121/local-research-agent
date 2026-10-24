@@ -90,7 +90,7 @@ export function ExportModal({ isOpen, onClose, targetEntryId }: ExportModalProps
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#02060f]/75 p-4 backdrop-blur-sm"
+      className="motion-fade-in fixed inset-0 z-50 flex items-center justify-center bg-[#02060f]/75 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Export Research"
@@ -98,7 +98,7 @@ export function ExportModal({ isOpen, onClose, targetEntryId }: ExportModalProps
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0a1120] shadow-[0_30px_80px_rgba(0,0,0,0.6)]">
+      <div className="motion-scale-in flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0a1120] shadow-[0_30px_80px_rgba(0,0,0,0.6)]">
         <header className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
             <h2 className="text-sm font-semibold text-slate-100">Export Research Dossier</h2>

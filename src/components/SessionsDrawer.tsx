@@ -53,12 +53,12 @@ export function SessionsDrawer() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm"
+      className="motion-fade-in fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) closeDrawer();
       }}
     >
-      <div className="flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-[#070c16] shadow-2xl">
+      <div className="motion-slide-in flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-[#070c16] shadow-2xl">
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/[0.06] px-5">
           <div>
             <h2 className="text-sm font-semibold text-slate-100">Research Archive</h2>

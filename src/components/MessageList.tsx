@@ -146,7 +146,7 @@ function Entry({ entry }: { entry: ChatEntry }) {
 
   return (
     <article
-      className={`group flex gap-3 ${isAssistant ? "items-start" : "flex-row-reverse items-start"}`}
+      className={`motion-fade-up group flex gap-3 ${isAssistant ? "items-start" : "flex-row-reverse items-start"}`}
     >
       <div
         className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-[10px] font-semibold tracking-wide ${
@@ -217,7 +217,7 @@ function Entry({ entry }: { entry: ChatEntry }) {
             <MessageBody content={displayContent} markdown={isAssistant} />
           )}
           {entry.state === "streaming" && displayContent ? (
-            <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-[1px] bg-sky-300 align-text-bottom" />
+            <span className="stream-caret ml-0.5 inline-block h-3.5 w-1.5 rounded-[1px] bg-sky-300 align-text-bottom" />
           ) : null}
         </div>
 
