@@ -273,7 +273,8 @@ ollama list                 # at least one local completion model
 # Linux:   pidstat -p "$(pgrep -f local-research-agent)" 1 60
 # macOS:   top -pid "$(pgrep -f 'Local Research Agent')" -l 60 -s 1
 
-# Installer size (must be < 30 MB)
+# Installer size (record it in the release notes; the embedded engine means
+# the bundles are tens of MB, not a few)
 Get-ChildItem src-tauri/target/release/bundle/msi,src-tauri/target/release/bundle/nsis |
   Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}}
 du -h src-tauri/target/release/bundle/appimage/*.AppImage \
