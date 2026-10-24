@@ -25,6 +25,7 @@ export function CitationChip({ id, source }: { id: number; source: ResearchSourc
   const cardRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
   const openedWithKeyboard = useRef(false);
+  const visible = open || pinned;
 
   const measure = () => {
     const rect = buttonRef.current?.getBoundingClientRect();
@@ -64,18 +65,30 @@ export function CitationChip({ id, source }: { id: number; source: ResearchSourc
       setPinned(false);
       setOpen(false);
     };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [pinned]);
+
+  // Escape closes a hover card too, and scrolling either closes it or keeps a
+  // pinned card attached to its marker.
+  useEffect(() => {
+    if (!visible) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setPinned(false);
       setOpen(false);
     };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
+    const onScroll = () => {
+      if (pinned) measure();
+      else setOpen(false);
     };
-  }, [pinned]);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [visible, pinned]);
 
   useEffect(() => {
     if (!pinned || !openedWithKeyboard.current) return;
@@ -102,8 +115,6 @@ export function CitationChip({ id, source }: { id: number; source: ResearchSourc
     setPinned(false);
     setOpen(false);
   };
-
-  const visible = open || pinned;
 
   return (
     <span className="inline-block align-baseline">
