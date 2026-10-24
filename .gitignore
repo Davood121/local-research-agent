@@ -8,3 +8,5 @@ src-tauri/gen/
 Thumbs.db
 .idea/
 .vscode/
+disk-bench.ps1
+optimize-network.ps1

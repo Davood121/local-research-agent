@@ -1,13 +1,19 @@
 import { ActivityPanel } from "./components/ActivityPanel";
 import { ChatPanel } from "./components/ChatPanel";
+import { ExportModal } from "./components/ExportModal";
 import { ModelDownloads } from "./components/ModelDownloads";
+import { SessionsDrawer } from "./components/SessionsDrawer";
 import { SourcesPanel } from "./components/SourcesPanel";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 import { useEventBridge } from "./lib/useEventBridge";
+import { useSessionStore } from "./stores/sessionStore";
 
 export default function App() {
   useEventBridge();
+  const exportModalOpen = useSessionStore((state) => state.exportModalOpen);
+  const exportEntryId = useSessionStore((state) => state.exportEntryId);
+  const closeExport = useSessionStore((state) => state.closeExport);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#050a13] text-slate-100 selection:bg-sky-400/25">
@@ -21,6 +27,8 @@ export default function App() {
 
       <StatusBar />
       <ModelDownloads />
+      <SessionsDrawer />
+      <ExportModal isOpen={exportModalOpen} onClose={closeExport} targetEntryId={exportEntryId} />
     </div>
   );
 }

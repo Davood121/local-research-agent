@@ -14,6 +14,10 @@ export function Composer() {
   const stop = useChatStore((state) => state.stop);
   const mode = useResearchStore((state) => state.mode);
   const setMode = useResearchStore((state) => state.setMode);
+  const depth = useResearchStore((state) => state.depth);
+  const setDepth = useResearchStore((state) => state.setDepth);
+  const focus = useResearchStore((state) => state.focus);
+  const setFocus = useResearchStore((state) => state.setFocus);
   const searchConnection = useResearchStore((state) => state.connection);
   const searchChecking = useResearchStore((state) => state.checking);
   const searchError = useResearchStore((state) => state.error);
@@ -41,7 +45,18 @@ export function Composer() {
 
   const submit = () => {
     if (!canSend) return;
-    if (send(draft, mode)) {
+    let finalPrompt = draft.trim();
+    if (mode === "research") {
+      const tags: string[] = [];
+      if (focus === "academic") tags.push("focus on technical and academic sources");
+      if (focus === "news") tags.push("focus on recent news and developments");
+      if (depth === "deep") tags.push("provide an exhaustive deep dive with detailed comparisons");
+      if (depth === "quick") tags.push("provide a concise summary");
+      if (tags.length > 0) {
+        finalPrompt = `${finalPrompt} (${tags.join(", ")})`;
+      }
+    }
+    if (send(finalPrompt, mode)) {
       setDraft("");
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
@@ -107,6 +122,68 @@ export function Composer() {
                 Chat
               </button>
             </div>
+
+            {mode === "research" ? (
+              <div className="flex items-center gap-1.5 text-[10px]">
+                <div
+                  role="group"
+                  aria-label="Research depth"
+                  className="inline-flex rounded-lg border border-white/[0.07] bg-black/20 p-0.5"
+                >
+                  {(["quick", "balanced", "deep"] as const).map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setDepth(d)}
+                      disabled={isStreaming}
+                      title={
+                        d === "quick"
+                          ? "Quick synthesis from top results"
+                          : d === "balanced"
+                            ? "Standard multi-engine research & coverage verification"
+                            : "Comprehensive in-depth investigation"
+                      }
+                      className={`rounded px-2 py-0.5 font-medium uppercase tracking-wider transition ${
+                        depth === d
+                          ? "bg-emerald-400/20 text-emerald-200"
+                          : "text-slate-500 hover:text-slate-300"
+                      }`}
+                    >
+                      {d === "quick" ? "Quick" : d === "balanced" ? "Balanced" : "Deep"}
+                    </button>
+                  ))}
+                </div>
+
+                <div
+                  role="group"
+                  aria-label="Research domain focus"
+                  className="hidden sm:inline-flex rounded-lg border border-white/[0.07] bg-black/20 p-0.5"
+                >
+                  {(["general", "academic", "news"] as const).map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setFocus(f)}
+                      disabled={isStreaming}
+                      title={
+                        f === "general"
+                          ? "All web sources"
+                          : f === "academic"
+                            ? "Prioritize papers, documentation, and technical references"
+                            : "Prioritize recent news and developments"
+                      }
+                      className={`rounded px-2 py-0.5 font-medium uppercase tracking-wider transition ${
+                        focus === f
+                          ? "bg-sky-400/20 text-sky-200"
+                          : "text-slate-500 hover:text-slate-300"
+                      }`}
+                    >
+                      {f === "general" ? "Web" : f === "academic" ? "Academic" : "News"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <span
               title={

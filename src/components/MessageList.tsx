@@ -3,8 +3,9 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatEntry } from "../stores/chatStore";
 import { useChatStore } from "../stores/chatStore";
+import { useSessionStore } from "../stores/sessionStore";
 import { BrandMark } from "./BrandMark";
-import { CheckIcon, CopyIcon } from "./Icons";
+import { CheckIcon, CopyIcon, ExportIcon } from "./Icons";
 
 const timeFormatter = new Intl.DateTimeFormat("en-US", {
   hour: "2-digit",
@@ -130,6 +131,8 @@ function Entry({ entry }: { entry: ChatEntry }) {
   const isEmptyAnswer = isAssistant && entry.state !== "streaming" && !displayContent;
   const isError = entry.state === "error";
 
+  const openExport = useSessionStore((state) => state.openExport);
+
   const copy = async () => {
     if (!navigator.clipboard || !displayContent) return;
     try {
@@ -219,14 +222,29 @@ function Entry({ entry }: { entry: ChatEntry }) {
         </div>
 
         {isAssistant && displayContent && entry.state !== "streaming" ? (
-          <button
-            type="button"
-            onClick={() => void copy()}
-            className="mt-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-slate-600 opacity-0 transition hover:bg-white/[0.04] hover:text-slate-300 focus:opacity-100 group-hover:opacity-100"
-          >
-            {copied ? <CheckIcon className="h-3 w-3" /> : <CopyIcon className="h-3 w-3" />}
-            {copied ? "Copied" : "Copy"}
-          </button>
+          <div className="mt-1 flex items-center gap-2 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+            <button
+              type="button"
+              onClick={() => void copy()}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-slate-500 transition hover:bg-white/[0.04] hover:text-slate-200"
+            >
+              {copied ? (
+                <CheckIcon className="h-3 w-3 text-emerald-400" />
+              ) : (
+                <CopyIcon className="h-3 w-3" />
+              )}
+              {copied ? "Copied" : "Copy"}
+            </button>
+            <button
+              type="button"
+              onClick={() => openExport(entry.id)}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-slate-500 transition hover:bg-white/[0.04] hover:text-slate-200"
+              title="Export this response as Markdown, HTML, or JSON"
+            >
+              <ExportIcon className="h-3 w-3 text-sky-400/80" />
+              Export
+            </button>
+          </div>
         ) : null}
       </div>
     </article>

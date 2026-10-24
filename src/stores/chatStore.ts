@@ -19,6 +19,7 @@ import { startResearch } from "../lib/research";
 import { useActivityStore } from "./activityStore";
 import { useMetricsStore } from "./metricsStore";
 import { useResearchStore } from "./researchStore";
+import { useSessionStore } from "./sessionStore";
 
 const MODEL_STORAGE_KEY = "lra.selectedModel";
 const MAX_HISTORY_MESSAGES = 24;
@@ -58,6 +59,7 @@ type ChatState = {
   send: (content: string, mode?: "chat" | "research") => boolean;
   stop: () => Promise<void>;
   newChat: () => void;
+  loadSession: (messages: ChatEntry[]) => void;
   clearError: () => void;
   onToken: (event: TokenEvent) => void;
   onStep: (event: StepEvent) => void;
@@ -263,11 +265,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   newChat: () => {
     if (get().isStreaming) return;
+    useSessionStore.setState({ activeSessionId: null });
     set({
       messages: [],
       error: null,
       lastDurationMs: null,
       cancelRequested: false,
+    });
+    useActivityStore.getState().reset();
+    useMetricsStore.getState().reset();
+  },
+
+  loadSession: (messages) => {
+    if (get().isStreaming) return;
+    set({
+      messages,
+      error: null,
+      lastDurationMs: null,
+      cancelRequested: false,
+      activeRunId: null,
+      isStreaming: false,
     });
     useActivityStore.getState().reset();
     useMetricsStore.getState().reset();
@@ -305,21 +322,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
       event.node === "research"
         ? "The local research run stopped before completing."
         : "The local model stopped before completing.";
+    const finalState: MessagePhase = failed ? (stopped ? "stopped" : "error") : "done";
+    const updatedMessages: ChatEntry[] = state.messages.map((entry) =>
+      entry.role === "assistant" && entry.runId === event.run_id
+        ? {
+            ...entry,
+            state: finalState,
+          }
+        : entry,
+    );
     set({
       isStreaming: false,
       activeRunId: null,
       cancelRequested: false,
       lastDurationMs: event.duration_ms,
       error: stopped || !failed ? null : (state.error ?? fallback),
-      messages: state.messages.map((entry) =>
-        entry.role === "assistant" && entry.runId === event.run_id
-          ? {
-              ...entry,
-              state: failed ? (stopped ? "stopped" : "error") : "done",
-            }
-          : entry,
-      ),
+      messages: updatedMessages,
     });
+    if (!failed && !stopped) {
+      useSessionStore.getState().saveSession(updatedMessages);
+    }
   },
 
   onSources: (event) => {

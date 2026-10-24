@@ -1,11 +1,19 @@
 import { useEffect } from "react";
 import { BrandMark } from "./BrandMark";
-import { ChevronDownIcon, DownloadIcon, RefreshIcon, ShieldIcon } from "./Icons";
+import {
+  ChevronDownIcon,
+  DownloadIcon,
+  ExportIcon,
+  HistoryIcon,
+  RefreshIcon,
+  ShieldIcon,
+} from "./Icons";
 import { DebugStreamButton } from "./DebugStreamButton";
 import { useChatStore } from "../stores/chatStore";
 import { useEngineStore } from "../stores/engineStore";
 import { useModelStore } from "../stores/modelStore";
 import { useResearchStore } from "../stores/researchStore";
+import { useSessionStore } from "../stores/sessionStore";
 
 function ModelPicker() {
   const models = useChatStore((state) => state.models);
@@ -106,6 +114,12 @@ export function TopBar() {
   const refresh = useChatStore((state) => state.refresh);
   const refreshResearch = useResearchStore((state) => state.refresh);
   const refreshEngine = useEngineStore((state) => state.refresh);
+  const messages = useChatStore((state) => state.messages);
+  const openDrawer = useSessionStore((state) => state.openDrawer);
+  const openExport = useSessionStore((state) => state.openExport);
+  const sessionCount = useSessionStore((state) => state.sessions.length);
+
+  const hasMessages = messages.length > 0;
 
   useEffect(() => {
     void refresh();
@@ -140,6 +154,34 @@ export function TopBar() {
           <ShieldIcon className="h-3 w-3 text-emerald-400/80" />
           Local inference
         </span>
+
+        <button
+          type="button"
+          onClick={openDrawer}
+          title="Past research sessions"
+          className="flex h-9 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/[0.07] hover:text-slate-100"
+        >
+          <HistoryIcon className="h-3.5 w-3.5 text-sky-400" />
+          <span className="hidden sm:inline">Archive</span>
+          {sessionCount > 0 && (
+            <span className="ml-0.5 rounded-full bg-white/10 px-1.5 py-0.2 text-[10px] text-slate-300">
+              {sessionCount}
+            </span>
+          )}
+        </button>
+
+        {hasMessages && (
+          <button
+            type="button"
+            onClick={() => openExport()}
+            title="Export research dossier (Markdown / HTML / JSON)"
+            className="flex h-9 items-center gap-1.5 rounded-lg border border-sky-400/25 bg-sky-400/[0.08] px-2.5 text-xs font-medium text-sky-200 transition hover:border-sky-400/40 hover:bg-sky-400/[0.14]"
+          >
+            <ExportIcon className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Export</span>
+          </button>
+        )}
+
         <ConnectionPill />
         <DebugStreamButton />
         <div className="mx-0.5 hidden h-6 w-px bg-white/[0.07] sm:block" />

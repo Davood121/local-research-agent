@@ -1,10 +1,12 @@
 import { useState } from "react";
 import type { ResearchSource } from "../lib/events";
 import { useChatStore } from "../stores/chatStore";
-import { CheckIcon, CopyIcon, GlobeIcon } from "./Icons";
+import { useSessionStore } from "../stores/sessionStore";
+import { CheckIcon, CopyIcon, ExportIcon, GlobeIcon } from "./Icons";
 
 export function SourcesPanel() {
   const messages = useChatStore((state) => state.messages);
+  const openExport = useSessionStore((state) => state.openExport);
   const latestResearch = [...messages]
     .reverse()
     .find((entry) => entry.role === "assistant" && entry.mode === "research");
@@ -34,9 +36,21 @@ export function SourcesPanel() {
             Sources
           </h2>
         </div>
-        <span className="font-mono text-[9.5px] text-slate-600">
-          {sources.length} {sources.length === 1 ? "source" : "sources"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[9.5px] text-slate-600">
+            {sources.length} {sources.length === 1 ? "source" : "sources"}
+          </span>
+          {sources.length > 0 && (
+            <button
+              type="button"
+              onClick={() => openExport()}
+              title="Export research dossier"
+              className="text-slate-500 hover:text-slate-200 transition"
+            >
+              <ExportIcon className="h-3.5 w-3.5 text-sky-400/80" />
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-3">
