@@ -1,4 +1,3 @@
-﻿// SENTINEL-OWNERSHIP-PROBE-1615
 //! Local research protocol, page extraction, retrieval and prompt building.
 //!
 //! This module contains only deterministic, network-free logic so it can be
@@ -167,7 +166,7 @@ impl EvidenceReport {
 
     pub fn summary(&self) -> String {
         format!(
-            "{}/{} pages Â· {} domains Â· {}% coverage",
+            "{}/{} pages · {} domains · {}% coverage",
             self.read_count,
             self.source_count,
             self.domain_count,
@@ -686,6 +685,145 @@ pub fn normalize_results(response: SearxResponse, limit: usize) -> Vec<SearchHit
     }
 
     hits
+}
+
+/// Parse DuckDuckGo's HTML endpoint into search results.
+///
+/// The built-in engine exists so research works without a separately installed
+/// SearXNG. It reads the same public result page a browser would, so the markup
+/// is parsed defensively: anything unrecognised is skipped rather than failing
+/// the whole run.
+pub fn parse_duckduckgo_html(html: &str) -> Vec<SearxResult> {
+    let mut results = Vec::new();
+    for block in html.split("class=\"result results_links").skip(1) {
+        let Some((href, title)) = parse_anchor(block, "class=\"result__a\"") else {
+            continue;
+        };
+        let url = unwrap_duckduckgo_link(&href);
+        if url.is_empty() {
+            continue;
+        }
+        let content = parse_snippet(block, "class=\"result__snippet\"", "</a>")
+            .or_else(|| parse_snippet(block, "class=\"result__snippet\"", "</div>"))
+            .unwrap_or_default();
+        results.push(SearxResult {
+            title,
+            url,
+            content,
+            engine: "duckduckgo".to_owned(),
+        });
+    }
+    results
+}
+
+/// Parse Bing's organic result list. Used when DuckDuckGo throttles a request.
+pub fn parse_bing_html(html: &str) -> Vec<SearxResult> {
+    let mut results = Vec::new();
+    for block in html.split("<li class=\"b_algo\"").skip(1) {
+        let Some((href, title)) = parse_anchor(block, "<h2") else {
+            continue;
+        };
+        if href.is_empty() {
+            continue;
+        }
+        let content = parse_snippet(block, "<p", "</p>").unwrap_or_default();
+        results.push(SearxResult {
+            title,
+            url: href,
+            content,
+            engine: "bing".to_owned(),
+        });
+    }
+    results
+}
+
+/// Return `(href, text)` for the first anchor after `marker`.
+fn parse_anchor(chunk: &str, marker: &str) -> Option<(String, String)> {
+    let start = chunk.find(marker)?;
+    let window = &chunk[start..];
+    let href_at = window.find("href=\"")?;
+    let after_href = &window[href_at + "href=\"".len()..];
+    let href_end = after_href.find('"')?;
+    let href = decode_entities(&after_href[..href_end]);
+    let after_open = &after_href[href_end..];
+    let text_start = after_open.find('>')? + 1;
+    let text = &after_open[text_start..];
+    let text_end = text.find("</a>")?;
+    Some((href, strip_tags(&text[..text_end])))
+}
+
+/// Return the visible text that follows `marker` up to `terminator`.
+fn parse_snippet(chunk: &str, marker: &str, terminator: &str) -> Option<String> {
+    let start = chunk.find(marker)?;
+    let window = &chunk[start..];
+    let text_start = window.find('>')? + 1;
+    let text = &window[text_start..];
+    let text_end = text.find(terminator)?;
+    let snippet = strip_tags(&text[..text_end]);
+    if snippet.is_empty() {
+        None
+    } else {
+        Some(snippet)
+    }
+}
+
+/// DuckDuckGo wraps outbound links in `/l/?uddg=<percent-encoded target>`.
+fn unwrap_duckduckgo_link(href: &str) -> String {
+    if let Some(index) = href.find("uddg=") {
+        let rest = &href[index + "uddg=".len()..];
+        let end = rest.find('&').unwrap_or(rest.len());
+        return percent_decode(&rest[..end]);
+    }
+    if let Some(stripped) = href.strip_prefix("//") {
+        return format!("https://{stripped}");
+    }
+    href.to_owned()
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+            {
+                out.push(high * 16 + low);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn strip_tags(input: &str) -> String {
+    let mut text = String::with_capacity(input.len());
+    let mut in_tag = false;
+    for ch in input.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                text.push(' ');
+            }
+            _ if !in_tag => text.push(ch),
+            _ => {}
+        }
+    }
+    collapse_whitespace(&decode_entities(&text))
 }
 
 /// A stable key for duplicate detection. Tracking parameters, fragments, a
@@ -1455,16 +1593,16 @@ fn decode_entity(entity: &str) -> Option<char> {
         "quot" => Some('"'),
         "apos" => Some('\''),
         "nbsp" => Some(' '),
-        "mdash" => Some('â€”'),
-        "ndash" => Some('â€“'),
-        "hellip" => Some('â€¦'),
-        "lsquo" => Some('â€˜'),
-        "rsquo" => Some('â€™'),
-        "ldquo" => Some('â€œ'),
-        "rdquo" => Some('â€'),
-        "copy" => Some('Â©'),
-        "reg" => Some('Â®'),
-        "trade" => Some('â„¢'),
+        "mdash" => Some('—'),
+        "ndash" => Some('–'),
+        "hellip" => Some('…'),
+        "lsquo" => Some('‘'),
+        "rsquo" => Some('’'),
+        "ldquo" => Some('“'),
+        "rdquo" => Some('”'),
+        "copy" => Some('©'),
+        "reg" => Some('®'),
+        "trade" => Some('™'),
         _ => None,
     }
 }
@@ -1897,8 +2035,64 @@ mod tests {
         assert!(query.chars().count() <= MAX_SEARCH_QUERY_CHARS);
         assert!(!query.ends_with(' '));
 
-        let unicode = "rÃ©sumÃ© ".repeat(100);
+        let unicode = "résumé ".repeat(100);
         assert!(search_query(&unicode).chars().count() <= MAX_SEARCH_QUERY_CHARS);
+    }
+
+    #[test]
+    fn parses_duckduckgo_results() {
+        let html = r#"
+        <div class="result results_links results_links_deep web-result ">
+          <div class="links_main links_deep result__body">
+            <h2 class="result__title">
+              <a rel="nofollow" class="result__a"
+                 href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Flocal-first&amp;rut=abc">
+                Local-first &amp; offline</a>
+            </h2>
+            <a class="result__snippet" href="x">Apps that work <b>offline</b> &amp; keep data private.</a>
+          </div>
+        </div>
+        <div class="result results_links results_links_deep web-result ">
+          <div class="links_main links_deep result__body">
+            <h2 class="result__title"><a class="result__a" href="https://example.org/direct">Second</a></h2>
+          </div>
+        </div>
+        "#;
+
+        let results = parse_duckduckgo_html(html);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Local-first & offline");
+        assert_eq!(results[0].url, "https://example.com/local-first");
+        assert_eq!(
+            results[0].content,
+            "Apps that work offline & keep data private."
+        );
+        assert_eq!(results[0].engine, "duckduckgo");
+        assert_eq!(results[1].url, "https://example.org/direct");
+        assert_eq!(results[1].content, "");
+    }
+
+    #[test]
+    fn parses_bing_results() {
+        let html = r#"
+        <li class="b_algo"><h2><a href="https://example.org/a" h="ID=SERP,1">Example &amp; Co</a></h2>
+          <p class="b_lineclamp">A <strong>snippet</strong> here.</p></li>
+        <li class="b_algo"><h2><a href="https://example.org/b">Second</a></h2></li>
+        "#;
+
+        let results = parse_bing_html(html);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Example & Co");
+        assert_eq!(results[0].url, "https://example.org/a");
+        assert_eq!(results[0].content, "A snippet here.");
+        assert_eq!(results[0].engine, "bing");
+        assert_eq!(results[1].content, "");
+    }
+
+    #[test]
+    fn parses_empty_or_foreign_markup_without_results() {
+        assert!(parse_duckduckgo_html("").is_empty());
+        assert!(parse_bing_html("<html><body>no results</body></html>").is_empty());
     }
 
     #[test]
@@ -2031,16 +2225,16 @@ mod tests {
 
     #[test]
     fn decodes_numeric_entities() {
-        assert_eq!(clean_fragment("caf&#233; &#x2014; ok", 100), "cafÃ© â€” ok");
+        assert_eq!(clean_fragment("caf&#233; &#x2014; ok", 100), "café — ok");
     }
 
     #[test]
     fn chunks_unicode_text_without_losing_the_tail() {
-        let text = "naÃ¯ve cafÃ© ".repeat(500);
+        let text = "naïve café ".repeat(500);
         let chunks = chunk_text(&text, 400, 80);
         assert!(chunks.len() > 2);
         assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 400));
-        assert!(chunks.last().unwrap().contains("cafÃ©"));
+        assert!(chunks.last().unwrap().contains("café"));
     }
 
     #[test]

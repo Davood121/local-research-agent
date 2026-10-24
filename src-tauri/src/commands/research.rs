@@ -31,12 +31,12 @@ use crate::ollama::{
 use crate::research::{
     build_context, build_messages, build_system_prompt, canonical_url_key, chunk_text,
     citation_footer, clean_fragment, clean_plain_text, domain_for, evaluate_evidence, extract_html,
-    has_citation_labels, is_public_ip, normalize_results, plan_research, rank_chunks, rank_hits,
-    retry_query, text_matches_query, validate_page_url, validate_research_request, Chunk,
-    ChunkKind, PlannedQuery, ResearchSource, SearchHit, SearxResponse, StartResearchRequest,
-    CHUNK_CHARS, CHUNK_OVERLAP, MAX_CANDIDATE_SOURCES, MAX_CONTEXT_CHUNKS, MAX_FETCHED_PAGES,
-    MAX_PAGE_BYTES, MAX_REDIRECTS, MAX_RETRY_PAGES, MAX_SEARCH_RESULTS, MAX_SOURCE_SNIPPET_CHARS,
-    SEARXNG_BASE_URL,
+    has_citation_labels, is_public_ip, normalize_results, parse_bing_html, parse_duckduckgo_html,
+    plan_research, rank_chunks, rank_hits, retry_query, text_matches_query, validate_page_url,
+    validate_research_request, Chunk, ChunkKind, PlannedQuery, ResearchSource, SearchHit,
+    SearxResponse, SearxResult, StartResearchRequest, CHUNK_CHARS, CHUNK_OVERLAP,
+    MAX_CANDIDATE_SOURCES, MAX_CONTEXT_CHUNKS, MAX_FETCHED_PAGES, MAX_PAGE_BYTES, MAX_REDIRECTS,
+    MAX_RETRY_PAGES, MAX_SEARCH_RESULTS, MAX_SOURCE_SNIPPET_CHARS, SEARXNG_BASE_URL,
 };
 use crate::state::AppState;
 
@@ -46,34 +46,46 @@ const SEARCH_BODY_LIMIT: usize = 2_000_000;
 const BODY_CHUNK_TIMEOUT: Duration = Duration::from_secs(12);
 const DNS_TIMEOUT: Duration = Duration::from_secs(5);
 const ACCEPT_PAGES: &str = "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1";
+/// Built-in search reads one public result page directly, so research keeps
+/// working on a machine without SearXNG.
+const BUILTIN_SEARCH_TIMEOUT: Duration = Duration::from_secs(15);
+const BUILTIN_SEARCH_BODY_LIMIT: usize = 1_500_000;
+const DUCKDUCKGO_SEARCH_URL: &str = "https://html.duckduckgo.com/html/";
+const BING_SEARCH_URL: &str = "https://www.bing.com/search";
+const SEARCH_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+    (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResearchStatus {
     pub connected: bool,
+    /// `searxng` when the local instance answers, `builtin` when research falls
+    /// back to the engine compiled into the app.
+    pub provider: String,
     pub error: Option<String>,
 }
 
-/// Probe the fixed loopback SearXNG endpoint. The search API itself validates
-/// JSON support; this only answers "is the local service up?".
+/// Report which search backend research will use. A missing SearXNG is not an
+/// error: the built-in engine covers it.
 #[tauri::command]
 pub async fn research_status(state: State<'_, AppState>) -> Result<ResearchStatus, AppError> {
     let Some(client) = state.http.as_ref() else {
         return Ok(ResearchStatus {
             connected: false,
+            provider: "none".to_owned(),
             error: Some("The local HTTP client could not be initialised.".to_owned()),
         });
     };
 
-    match probe_searxng(client).await {
-        Ok(()) => Ok(ResearchStatus {
-            connected: true,
-            error: None,
-        }),
-        Err(error) => Ok(ResearchStatus {
-            connected: false,
-            error: Some(error),
-        }),
-    }
+    let provider = match probe_searxng(client).await {
+        Ok(()) => "searxng",
+        Err(_) => "builtin",
+    };
+
+    Ok(ResearchStatus {
+        connected: true,
+        provider: provider.to_owned(),
+        error: None,
+    })
 }
 
 #[tauri::command]
@@ -265,21 +277,22 @@ async fn run_research(
         None,
     );
 
-    let search_batch = match search_plan(client, &plan.queries, app_cancel, chat_cancel).await {
-        Phase::Cancelled => {
-            cancel_phase(
-                tx,
-                run_id,
-                "web_search",
-                search_args,
-                "search",
-                search_started,
-                research_started,
-            );
-            return;
-        }
-        Phase::Done(batch) => batch,
-    };
+    let search_batch =
+        match search_plan(client, reader, &plan.queries, app_cancel, chat_cancel).await {
+            Phase::Cancelled => {
+                cancel_phase(
+                    tx,
+                    run_id,
+                    "web_search",
+                    search_args,
+                    "search",
+                    search_started,
+                    research_started,
+                );
+                return;
+            }
+            Phase::Done(batch) => batch,
+        };
     let SearchBatch { hits, errors } = search_batch;
     if hits.is_empty() {
         let detail = errors.first().cloned().unwrap_or_else(|| {
@@ -426,6 +439,7 @@ async fn run_research(
 
             let retry_batch = match search_plan(
                 client,
+                reader,
                 std::slice::from_ref(&retry_query),
                 app_cancel,
                 chat_cancel,
@@ -713,6 +727,7 @@ struct SearchBatch {
 
 async fn search_plan(
     client: &reqwest::Client,
+    reader: &reqwest::Client,
     queries: &[PlannedQuery],
     app_cancel: &CancellationToken,
     chat_cancel: &CancellationToken,
@@ -720,8 +735,9 @@ async fn search_plan(
     let mut tasks = JoinSet::new();
     for (index, query) in queries.iter().enumerate() {
         let client = client.clone();
+        let reader = reader.clone();
         let query = query.clone();
-        tasks.spawn(async move { (index, search_planned_query(&client, &query).await) });
+        tasks.spawn(async move { (index, search_planned_query(&client, &reader, &query).await) });
     }
 
     let mut results: Vec<Option<Result<Vec<SearchHit>, String>>> =
@@ -764,10 +780,12 @@ async fn search_plan(
 
 async fn search_planned_query(
     client: &reqwest::Client,
+    reader: &reqwest::Client,
     query: &PlannedQuery,
 ) -> Result<Vec<SearchHit>, String> {
-    let primary = search_searxng(
+    let primary = search_web(
         client,
+        reader,
         &query.query,
         &query.engines,
         query.time_range.as_deref(),
@@ -783,10 +801,140 @@ async fn search_planned_query(
     // filter is the most reliable single fallback; it also keeps research
     // working with a custom SearXNG configuration.
     if !query.engines.is_empty() || query.time_range.is_some() {
-        return search_searxng(client, &query.query, &[], None).await;
+        return search_web(client, reader, &query.query, &[], None).await;
     }
 
     primary
+}
+
+/// Search through the local SearXNG instance when it is running, and through the
+/// built-in engine otherwise. Research never fails just because SearXNG is not
+/// installed.
+async fn search_web(
+    client: &reqwest::Client,
+    reader: &reqwest::Client,
+    query: &str,
+    engines: &[String],
+    time_range: Option<&str>,
+) -> Result<Vec<SearchHit>, String> {
+    match search_searxng(client, query, engines, time_range).await {
+        Ok(hits) if !hits.is_empty() => Ok(hits),
+        Ok(_) => search_builtin(reader, query, engines, time_range).await,
+        Err(searx_error) => match search_builtin(reader, query, engines, time_range).await {
+            Ok(hits) if !hits.is_empty() => Ok(hits),
+            Ok(_) => Err(searx_error),
+            Err(builtin_error) => Err(format!(
+                "{searx_error} The built-in search also failed ({builtin_error})."
+            )),
+        },
+    }
+}
+
+/// Query a public search page directly, without SearXNG, and normalize the
+/// results exactly like a SearXNG response.
+async fn search_builtin(
+    reader: &reqwest::Client,
+    query: &str,
+    engines: &[String],
+    time_range: Option<&str>,
+) -> Result<Vec<SearchHit>, String> {
+    let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
+    if query.is_empty() {
+        return Err("The research query is empty.".to_owned());
+    }
+
+    let prefers_bing = engines.iter().any(|engine| engine == "bing");
+    let mut errors = Vec::new();
+
+    for provider in if prefers_bing {
+        [BuiltinProvider::Bing, BuiltinProvider::DuckDuckGo]
+    } else {
+        [BuiltinProvider::DuckDuckGo, BuiltinProvider::Bing]
+    } {
+        match provider.search(reader, &query, time_range).await {
+            Ok(results) if !results.is_empty() => {
+                return Ok(normalize_results(
+                    SearxResponse { results },
+                    MAX_SEARCH_RESULTS,
+                ));
+            }
+            Ok(_) => errors.push(format!("{} returned no results", provider.label())),
+            Err(error) => errors.push(format!("{}: {error}", provider.label())),
+        }
+    }
+
+    Err(errors.join("; "))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BuiltinProvider {
+    DuckDuckGo,
+    Bing,
+}
+
+impl BuiltinProvider {
+    fn label(self) -> &'static str {
+        match self {
+            Self::DuckDuckGo => "DuckDuckGo",
+            Self::Bing => "Bing",
+        }
+    }
+
+    async fn search(
+        self,
+        reader: &reqwest::Client,
+        query: &str,
+        time_range: Option<&str>,
+    ) -> Result<Vec<SearxResult>, String> {
+        let mut endpoint = match self {
+            Self::DuckDuckGo => reqwest::Url::parse(DUCKDUCKGO_SEARCH_URL),
+            Self::Bing => reqwest::Url::parse(BING_SEARCH_URL),
+        }
+        .map_err(|_| "The built-in search endpoint is invalid.".to_owned())?;
+        {
+            let mut pairs = endpoint.query_pairs_mut();
+            pairs.append_pair("q", query);
+            if matches!(self, Self::Bing) {
+                pairs.append_pair("count", "20");
+            }
+            if let (Self::DuckDuckGo, Some(code)) =
+                (self, time_range.and_then(duckduckgo_time_range))
+            {
+                pairs.append_pair("df", code);
+            }
+        }
+
+        let response = reader
+            .get(endpoint)
+            .header(reqwest::header::ACCEPT, ACCEPT_PAGES)
+            .header(reqwest::header::USER_AGENT, SEARCH_USER_AGENT)
+            .timeout(BUILTIN_SEARCH_TIMEOUT)
+            .send()
+            .await
+            .map_err(|error| short(&error.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("HTTP {status}"));
+        }
+
+        let body = read_limited_body(response, BUILTIN_SEARCH_BODY_LIMIT).await?;
+        let html = String::from_utf8_lossy(&body);
+        Ok(match self {
+            Self::DuckDuckGo => parse_duckduckgo_html(&html),
+            Self::Bing => parse_bing_html(&html),
+        })
+    }
+}
+
+fn duckduckgo_time_range(range: &str) -> Option<&'static str> {
+    match range {
+        "day" => Some("d"),
+        "week" => Some("w"),
+        "month" => Some("m"),
+        "year" => Some("y"),
+        _ => None,
+    }
 }
 
 async fn fetch_hits(

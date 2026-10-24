@@ -9,11 +9,14 @@ const FOCUS_STORAGE_KEY = "lra.researchFocus";
 
 export type ResearchMode = "chat" | "research";
 export type SearchConnection = "checking" | "connected" | "offline";
+/** Which backend answers searches: a local SearXNG or the built-in engine. */
+export type SearchProvider = "searxng" | "builtin" | "none";
 export type ResearchDepth = "quick" | "balanced" | "deep";
 export type ResearchFocus = "general" | "academic" | "news";
 
 type ResearchState = {
   connection: SearchConnection;
+  provider: SearchProvider;
   checking: boolean;
   error: string | null;
   mode: ResearchMode;
@@ -53,6 +56,7 @@ function readStoredFocus(): ResearchFocus {
 
 export const useResearchStore = create<ResearchState>((set, get) => ({
   connection: "checking",
+  provider: "none",
   checking: false,
   error: null,
   mode: readStoredMode(),
@@ -67,6 +71,7 @@ export const useResearchStore = create<ResearchState>((set, get) => ({
       set({
         checking: false,
         connection: status.connected ? "connected" : "offline",
+        provider: status.provider === "searxng" ? "searxng" : "builtin",
         error: status.error,
       });
     } catch (error) {

@@ -5,6 +5,8 @@ import type { ChatTurn } from "./ollama";
 /** Mirrors `commands/research.rs`. The endpoint is fixed in Rust. */
 export type ResearchStatus = {
   connected: boolean;
+  /** `searxng` when the local instance answers, `builtin` when the app searches directly. */
+  provider: string;
   error: string | null;
 };
 
