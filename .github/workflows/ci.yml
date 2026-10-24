@@ -239,19 +239,46 @@ jobs:
       - name: Download installers
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: installers
+          path: artifacts
           merge-multiple: true
+
+      # upload-artifact uses the least common ancestor of the *input paths* as
+      # the artifact root, so a bundle can land several directories deep (e.g.
+      # src-tauri/target/release/bundle/dmg/<name>.dmg). Flatten every package
+      # into one directory instead of guessing a search depth.
+      - name: Collect installers
+        run: |
+          mkdir -p installers
+          find artifacts -type f \
+            \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' \
+               -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp -v {} installers/ \;
+          count=$(find installers -maxdepth 1 -type f | wc -l)
+          ls -l installers
+          echo "collected $count package(s)"
+          if [ "$count" -lt 5 ]; then
+            echo "::error::Expected 5 packages (msi, exe, dmg, AppImage, deb), found $count."
+            exit 1
+          fi
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mapfile -d '' assets < <(find installers -maxdepth 3 -type f -print0)
+          mapfile -d '' assets < <(find installers -maxdepth 1 -type f -print0)
           if ((${#assets[@]} == 0)); then
-            echo "::error::No installer packages were downloaded."
+            echo "::error::No installer packages were collected."
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # A previous attempt already published this tag: replace the assets
+            # instead of failing, so a re-run repairs the release.
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
