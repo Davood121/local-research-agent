@@ -1,11 +1,14 @@
+import { useState } from "react";
 import { useChatStore } from "../stores/chatStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { Composer } from "./Composer";
 import { EmptyState } from "./EmptyState";
+import { KnowledgeGraphView } from "./KnowledgeGraphView";
 import { MessageList } from "./MessageList";
-import { ExportIcon, PlusIcon, XIcon } from "./Icons";
+import { ChatIcon, ExportIcon, GraphIcon, PlusIcon, XIcon } from "./Icons";
 
 export function ChatPanel() {
+  const [viewMode, setViewMode] = useState<"chat" | "graph">("chat");
   const messages = useChatStore((state) => state.messages);
   const isStreaming = useChatStore((state) => state.isStreaming);
   const error = useChatStore((state) => state.error);
@@ -40,6 +43,41 @@ export function ChatPanel() {
 
         <div className="flex items-center gap-2">
           {messages.length > 0 ? (
+            <div
+              role="group"
+              aria-label="View mode"
+              className="inline-flex rounded-lg border border-white/[0.07] bg-black/20 p-0.5"
+            >
+              <button
+                type="button"
+                onClick={() => setViewMode("chat")}
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px] font-semibold transition ${
+                  viewMode === "chat"
+                    ? "bg-sky-400/15 text-sky-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+                title="Standard message view"
+              >
+                <ChatIcon className="h-3 w-3" />
+                Chat
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("graph")}
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px] font-semibold transition ${
+                  viewMode === "graph"
+                    ? "bg-emerald-400/15 text-emerald-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+                title="Interactive visual knowledge graph"
+              >
+                <GraphIcon className="h-3 w-3" />
+                Knowledge Graph
+              </button>
+            </div>
+          ) : null}
+
+          {messages.length > 0 ? (
             <button
               type="button"
               onClick={() => openExport()}
@@ -64,7 +102,13 @@ export function ChatPanel() {
         </div>
       </header>
 
-      {messages.length === 0 ? <EmptyState /> : <MessageList />}
+      {messages.length === 0 ? (
+        <EmptyState />
+      ) : viewMode === "graph" ? (
+        <KnowledgeGraphView />
+      ) : (
+        <MessageList />
+      )}
 
       {error ? (
         <div className="relative z-10 px-4 sm:px-6">
