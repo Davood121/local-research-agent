@@ -5,6 +5,7 @@ import {
   generateHtmlReport,
   generateJsonExport,
   generateMarkdownReport,
+  printReportAsPdf,
   type ExportFormat,
   type ResearchReportData,
 } from "../lib/export";
@@ -63,7 +64,7 @@ export function ExportModal({ isOpen, onClose, targetEntryId }: ExportModalProps
     previewContent = generateMarkdownReport(reportData);
     filename = `research-report-${Date.now()}.md`;
     mimeType = "text/markdown";
-  } else if (format === "html") {
+  } else if (format === "html" || format === "pdf") {
     previewContent = generateHtmlReport(reportData);
     filename = `research-report-${Date.now()}.html`;
     mimeType = "text/html";
@@ -85,6 +86,10 @@ export function ExportModal({ isOpen, onClose, targetEntryId }: ExportModalProps
   };
 
   const handleDownload = () => {
+    if (format === "pdf") {
+      printReportAsPdf(reportData);
+      return;
+    }
     downloadFile(previewContent, filename, mimeType);
   };
 
@@ -118,7 +123,7 @@ export function ExportModal({ isOpen, onClose, targetEntryId }: ExportModalProps
 
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] bg-black/20 px-5 py-2.5">
           <div className="flex gap-1.5">
-            {(["markdown", "html", "json"] as const).map((fmt) => (
+            {(["markdown", "html", "pdf", "json"] as const).map((fmt) => (
               <button
                 key={fmt}
                 type="button"
@@ -133,7 +138,9 @@ export function ExportModal({ isOpen, onClose, targetEntryId }: ExportModalProps
                   ? "Markdown (.md)"
                   : fmt === "html"
                     ? "Printable HTML"
-                    : "Raw JSON"}
+                    : fmt === "pdf"
+                      ? "PDF (.pdf)"
+                      : "Raw JSON"}
               </button>
             ))}
           </div>
@@ -163,7 +170,7 @@ export function ExportModal({ isOpen, onClose, targetEntryId }: ExportModalProps
               className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/30 bg-sky-400/[0.1] px-3.5 py-1.5 text-xs font-semibold text-sky-200 transition hover:border-sky-400/50 hover:bg-sky-400/[0.18]"
             >
               <DownloadIcon className="h-3.5 w-3.5" />
-              Download
+              {format === "pdf" ? "Print / Save PDF" : "Download"}
             </button>
           </div>
         </div>

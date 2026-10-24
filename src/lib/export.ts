@@ -1,7 +1,7 @@
 import type { ChatEntry } from "../stores/chatStore";
 import type { ResearchSource } from "./events";
 
-export type ExportFormat = "markdown" | "html" | "json";
+export type ExportFormat = "markdown" | "html" | "pdf" | "json";
 
 export interface ResearchReportData {
   title: string;
@@ -165,6 +165,59 @@ export function generateHtmlReport(data: ResearchReportData): string {
   </footer>
 </body>
 </html>`;
+}
+
+/**
+ * Open the styled dossier in the platform print dialog, where it can be saved
+ * as PDF. This avoids shipping a PDF engine: the webview already renders the
+ * report, so the operating system's own PDF writer produces the file.
+ *
+ * Returns false when the webview has no print implementation, so the caller can
+ * fall back to downloading the HTML.
+ */
+export function printReportAsPdf(data: ResearchReportData): boolean {
+  const html = generateHtmlReport(data).replace(
+    "</style>",
+    `    @page { size: A4; margin: 16mm; }
+    body { max-width: none; margin: 0; padding: 0; }
+    li { break-inside: avoid; }
+  </style>`,
+  );
+
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.title = "Research dossier print view";
+  Object.assign(frame.style, {
+    position: "fixed",
+    right: "0",
+    bottom: "0",
+    width: "0",
+    height: "0",
+    border: "0",
+    opacity: "0",
+    pointerEvents: "none",
+  });
+  document.body.appendChild(frame);
+
+  const cleanup = () => {
+    window.setTimeout(() => frame.remove(), 60_000);
+  };
+
+  frame.onload = () => {
+    const target = frame.contentWindow;
+    if (!target || typeof target.print !== "function") {
+      frame.remove();
+      downloadFile(html, `research-report-${Date.now()}.html`, "text/html");
+      return;
+    }
+    window.setTimeout(() => {
+      target.focus();
+      target.print();
+      cleanup();
+    }, 250);
+  };
+  frame.srcdoc = html;
+  return true;
 }
 
 /** Formats a full conversation or research item to JSON */
