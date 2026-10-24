@@ -1,3 +1,4 @@
+﻿// SENTINEL-OWNERSHIP-PROBE-1615
 //! Local research protocol, page extraction, retrieval and prompt building.
 //!
 //! This module contains only deterministic, network-free logic so it can be
@@ -166,7 +167,7 @@ impl EvidenceReport {
 
     pub fn summary(&self) -> String {
         format!(
-            "{}/{} pages · {} domains · {}% coverage",
+            "{}/{} pages Â· {} domains Â· {}% coverage",
             self.read_count,
             self.source_count,
             self.domain_count,
@@ -1454,16 +1455,16 @@ fn decode_entity(entity: &str) -> Option<char> {
         "quot" => Some('"'),
         "apos" => Some('\''),
         "nbsp" => Some(' '),
-        "mdash" => Some('—'),
-        "ndash" => Some('–'),
-        "hellip" => Some('…'),
-        "lsquo" => Some('‘'),
-        "rsquo" => Some('’'),
-        "ldquo" => Some('“'),
-        "rdquo" => Some('”'),
-        "copy" => Some('©'),
-        "reg" => Some('®'),
-        "trade" => Some('™'),
+        "mdash" => Some('â€”'),
+        "ndash" => Some('â€“'),
+        "hellip" => Some('â€¦'),
+        "lsquo" => Some('â€˜'),
+        "rsquo" => Some('â€™'),
+        "ldquo" => Some('â€œ'),
+        "rdquo" => Some('â€'),
+        "copy" => Some('Â©'),
+        "reg" => Some('Â®'),
+        "trade" => Some('â„¢'),
         _ => None,
     }
 }
@@ -1896,7 +1897,7 @@ mod tests {
         assert!(query.chars().count() <= MAX_SEARCH_QUERY_CHARS);
         assert!(!query.ends_with(' '));
 
-        let unicode = "résumé ".repeat(100);
+        let unicode = "rÃ©sumÃ© ".repeat(100);
         assert!(search_query(&unicode).chars().count() <= MAX_SEARCH_QUERY_CHARS);
     }
 
@@ -2030,16 +2031,16 @@ mod tests {
 
     #[test]
     fn decodes_numeric_entities() {
-        assert_eq!(clean_fragment("caf&#233; &#x2014; ok", 100), "café — ok");
+        assert_eq!(clean_fragment("caf&#233; &#x2014; ok", 100), "cafÃ© â€” ok");
     }
 
     #[test]
     fn chunks_unicode_text_without_losing_the_tail() {
-        let text = "naïve café ".repeat(500);
+        let text = "naÃ¯ve cafÃ© ".repeat(500);
         let chunks = chunk_text(&text, 400, 80);
         assert!(chunks.len() > 2);
         assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 400));
-        assert!(chunks.last().unwrap().contains("café"));
+        assert!(chunks.last().unwrap().contains("cafÃ©"));
     }
 
     #[test]

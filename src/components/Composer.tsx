@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import { buildDenseResearchPrompt } from "../lib/inferenceMath";
+import type { ResearchTemplate } from "../lib/templates";
 import { useChatStore } from "../stores/chatStore";
 import { useResearchStore } from "../stores/researchStore";
 import { ChatIcon, GlobeIcon, RefreshIcon, SendIcon, StopIcon } from "./Icons";
+import { TemplateSelector } from "./TemplateSelector";
 
 export function Composer() {
   const [draft, setDraft] = useState("");
+  const [activeTemplate, setActiveTemplate] = useState<ResearchTemplate | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const connection = useChatStore((state) => state.connection);
   const models = useChatStore((state) => state.models);
@@ -47,13 +51,21 @@ export function Composer() {
     if (!canSend) return;
     let finalPrompt = draft.trim();
     if (mode === "research") {
-      const tags: string[] = [];
-      if (focus === "academic") tags.push("focus on technical and academic sources");
-      if (focus === "news") tags.push("focus on recent news and developments");
-      if (depth === "deep") tags.push("provide an exhaustive deep dive with detailed comparisons");
-      if (depth === "quick") tags.push("provide a concise summary");
-      if (tags.length > 0) {
-        finalPrompt = `${finalPrompt} (${tags.join(", ")})`;
+      if (activeTemplate) {
+        finalPrompt = buildDenseResearchPrompt(
+          finalPrompt,
+          activeTemplate.directive,
+        ).structuredPrompt;
+      } else {
+        const tags: string[] = [];
+        if (focus === "academic") tags.push("focus on technical and academic sources");
+        if (focus === "news") tags.push("focus on recent news and developments");
+        if (depth === "deep")
+          tags.push("provide an exhaustive deep dive with detailed comparisons");
+        if (depth === "quick") tags.push("provide a concise summary");
+        if (tags.length > 0) {
+          finalPrompt = `${finalPrompt} (${tags.join(", ")})`;
+        }
       }
     }
     if (send(finalPrompt, mode)) {
@@ -78,7 +90,9 @@ export function Composer() {
               ? "Checking local search…"
               : searchConnection === "offline"
                 ? "Start SearXNG at 127.0.0.1:8080, then retry…"
-                : "Ask a research question; result pages are read and cited…"
+                : activeTemplate
+                  ? activeTemplate.placeholder
+                  : "Ask a research question; result pages are read and cited…"
             : "Ask a question, paste notes, or describe a task…";
 
   const researchOffline = mode === "research" && searchConnection === "offline" && !searchChecking;
@@ -237,6 +251,14 @@ export function Composer() {
                 {searchChecking ? "Checking" : "Retry"}
               </button>
             </div>
+          ) : null}
+
+          {mode === "research" ? (
+            <TemplateSelector
+              activeTemplateId={activeTemplate?.id ?? null}
+              onSelectTemplate={setActiveTemplate}
+              disabled={isStreaming}
+            />
           ) : null}
 
           <textarea
