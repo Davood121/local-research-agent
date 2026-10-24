@@ -99,7 +99,7 @@ No cloud. No API keys. No telemetry. Just pure local intelligence.
 ```
 1. Launch the app
 2. Click the ⬇ download button → pick a model (Qwen2.5 1.5B recommended)
-3. Start chatting — research needs SearXNG (see below)
+3. Start chatting — research works out of the box with the built-in search engine
 ```
 
 **Recommended models:**
@@ -175,16 +175,20 @@ npm ci
 npm run tauri:dev
 ```
 
-### Research (needs SearXNG)
+### Research (no setup required)
+
+Research uses the built-in search engine by default — it reads public result
+pages directly, so there is nothing to install. A local **SearXNG** is optional
+and, when present at `127.0.0.1:8080`, takes priority for multi-engine routing:
 
 ```bash
-# Docker (recommended)
+# Optional: richer multi-engine routing
 cd tools/searxng && docker compose up -d
 
 # WSL Ubuntu (no Docker)
 ~/start-searxng.sh
 
-# Dev mock (no SearXNG required)
+# Dev search proxy on 127.0.0.1:8080
 npm run mock:search
 ```
 

@@ -52,12 +52,17 @@ milestone and to later work.
   disk by the app, or uploaded. The selected model name is stored in
   `localStorage` for convenience.
 
-## SearXNG and page-read boundary
+## Search and page-read boundary
 
-- The SearXNG client uses the same `no_proxy()` loopback client and only builds
-  `GET /search` from the constant `http://127.0.0.1:8080`. JSON output must be
-  enabled by the user. The app does not install or manage SearXNG.
-- The webview cannot supply a page URL. Rust takes result URLs from the SearXNG
+- Research first tries the loopback SearXNG client, which uses `no_proxy()` and
+  only builds `GET /search` from the constant `http://127.0.0.1:8080`. JSON
+  output must be enabled by the user. The app does not install or manage
+  SearXNG.
+- When SearXNG is absent, unreachable, or returns nothing, the built-in engine
+  requests `https://html.duckduckgo.com/html/` and falls back to
+  `https://www.bing.com/search`. These are the only two outbound search hosts,
+  they are hard-coded, and the webview cannot influence them.
+- The webview cannot supply a page URL. Rust takes result URLs from the search
   response and validates each one.
 - Page URLs must be `http`/`https`, without embedded credentials. `localhost`,
   `.localhost`, `.local`, `.internal`, `.lan`, `.home`, `metadata.google.internal`,

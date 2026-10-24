@@ -9,12 +9,19 @@ answer with numbered citations. If the first pass is thin it runs one broader
 search and reads at most two more pages. It is the only path that makes
 non-loopback requests, and it only runs after you press **Research**.
 
+When no SearXNG instance answers, research falls back to the **built-in search
+engine**: it reads `html.duckduckgo.com` directly and, if that is throttled,
+`www.bing.com`. Results are normalized and ranked exactly like SearXNG results,
+so citations and page reading behave the same way. The app reports which
+backend is active in the status bar and composer.
+
 ## Prerequisites
 
 - A selectable local chat model: a GGUF file in the app's models folder
   (runs on the built-in engine, no server) or Ollama at
   `http://127.0.0.1:11434` with at least one local chat model.
-- SearXNG at `http://127.0.0.1:8080` with **JSON output enabled**.
+- **Optional:** SearXNG at `http://127.0.0.1:8080` with **JSON output enabled**.
+  Without it the built-in engine is used, so research works on a fresh install.
 - The app does not install, start, or configure either service. It never accepts
   an alternate endpoint from the webview.
 
